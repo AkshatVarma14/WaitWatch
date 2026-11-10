@@ -27,7 +27,7 @@ ENV VITE_API_URL=${VITE_API_URL} \
 RUN npm run build
 
 # Stage 2: Serve with lightweight pinned Nginx Alpine image
-FROM nginx:1.27.2-alpine AS runtime
+FROM nginx:1.30.6-alpine AS runtime
 
 # Remove default site configuration
 RUN rm -rf /etc/nginx/conf.d/default.conf /usr/share/nginx/html/*

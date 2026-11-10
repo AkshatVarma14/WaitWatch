@@ -765,13 +765,13 @@ Implemented the production-oriented Docker Compose stack (`docker-compose.yml`),
    - **Database (`db`)**: Pinned `postgis/postgis:16-3.4` with persistent volume `waitwatch-pgdata` and `pg_isready` healthcheck.
    - **Migration Runner (`migrate`)**: Dedicated one-shot service running `["alembic", "upgrade", "head"]` with `restart: "no"`. Depends on `db: { condition: service_healthy }`. Guarantees schema migrations apply exactly once before application startup, preserving restart behavior without running competing migration processes.
    - **API Backend (`api`)**: Pinned `python:3.12-slim-bookworm` container image (`waitwatch-api:0.1.0`) running Uvicorn on port 8000. Depends on `migrate: { condition: service_completed_successfully }` and `db: { condition: service_healthy }`.
-   - **Web Frontend (`web`)**: Pinned `node:22-alpine3.20` + `nginx:1.27.2-alpine` multi-stage container (`waitwatch-web:0.1.0`) published on port 3000 (`${WEB_PORT:-3000}:80`). Depends on `api: { condition: service_healthy }`.
+   - **Web Frontend (`web`)**: Pinned `node:22-alpine3.20` + `nginx:1.30.6-alpine` multi-stage container (`waitwatch-web:0.1.0`) published on port 3000 (`${WEB_PORT:-3000}:80`). Depends on `api: { condition: service_healthy }`.
 2. **Hardened FastAPI Containerization** (`apps/api/Dockerfile`, `apps/api/.dockerignore`):
    - Uses `python:3.12-slim-bookworm` with security updates and minimal packages.
    - Created unprivileged runtime user and group `waitwatch` (UID/GID 1001).
    - Zero-dependency healthcheck: executes `python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"` to verify server status and database connectivity without external curl/wget dependencies.
 3. **Optimized Nginx React SPA Containerization** (`apps/web/Dockerfile`, `apps/web/nginx.conf`, `apps/web/.dockerignore`):
-   - Multi-stage build with `node:22-alpine3.20` builder running `npm ci` and `npm run build`, followed by lightweight `nginx:1.27.2-alpine` runtime.
+   - Multi-stage build with `node:22-alpine3.20` builder running `npm ci` and `npm run build`, followed by lightweight `nginx:1.30.6-alpine` runtime.
    - Nginx configured with gzip compression, long-term immutable caching for `/assets/`, SPA client-side fallback (`try_files $uri $uri/ /index.html`), dedicated unlogged healthcheck (`/health`), and internal reverse proxying for `/api/` traffic to `http://api:8000/api/`.
 4. **Integration Gap Polish & Browser Networking**:
    - **Database URL Normalization** (`apps/api/app/core/config.py`): Pydantic `@field_validator("database_url", mode="before")` automatically converts `postgresql://` to `postgresql+asyncpg://`, supporting standard external connection strings without runtime driver errors.
@@ -794,7 +794,7 @@ Implemented the production-oriented Docker Compose stack (`docker-compose.yml`),
 - **Frontend Vitest**: 83 passed across 6 test suites in 7.06s (`cd apps/web && npm.cmd test -- --run`).
 - **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
 - **Frontend Production Build**: Built cleanly with Vite in 3.86s (`npm.cmd run build`).
-- **Docker Compose Configuration**: Syntax, image pinning, volume persistence, dependency conditions, and healthchecks verified via `scratch/validate_compose.py`.
+- **Docker Compose Configuration (Static Validation)**: Syntax, image pinning, volume persistence, dependency conditions, and healthchecks verified via static AST/YAML validation (`scratch/validate_compose.py`). Note: Docker runtime is not installed on this local Windows machine; no live `docker compose config`, `docker build`, or container smoke run was executed.
 
 #### Changed / Added Files
 - `docker-compose.yml` (multi-service stack: `db`, `migrate`, `api`, `web`, and `waitwatch-pgdata` volume)
@@ -816,6 +816,31 @@ Implemented the production-oriented Docker Compose stack (`docker-compose.yml`),
 #### Current Limitations & Next Roadmap Steps
 - **Limitations**:
   - Live vehicle positions and stop arrivals update via 30-second client polling; push-based WebSocket streaming is scheduled for future real-time enhancement.
+  - Docker daemon is not installed on this development machine; Compose verification was limited to static YAML/schema structure analysis without live container execution or smoke runs.
   - Production secrets, SSL/TLS termination, and managed database hosting are external to this single-host Compose scaffold.
 - **Next Roadmap Step**:
   - **Stage 5 / Future Enhancements**: WebSocket live vehicle and ETA streaming, turn-by-turn route planning, or multi-city production deployment.
+
+---
+
+### 2026-11-10 — Stage 4.5 Correction: Update Vulnerable Nginx Pin
+
+#### Overview
+Security review identified that `apps/web/Dockerfile` pinned `nginx:1.27.2-alpine`, which is subject to security advisories including CVE-2026-28755 (vulnerable in 1.27.2–1.29.6) and resolved in the stable 1.30.6 release. Updated the runtime base image tag in `apps/web/Dockerfile` to the official stable fixed release `nginx:1.30.6-alpine`, keeping the Node builder unchanged. Updated documentation and architecture references to reflect the new Nginx version, and clarified that Compose verification on this machine is strictly static validation as Docker is not installed locally.
+
+#### Key Deliverables & Changes
+1. **Dockerfile Base Image Correction** (`apps/web/Dockerfile`):
+   - Updated runtime stage from `nginx:1.27.2-alpine` to `nginx:1.30.6-alpine`.
+   - Node builder stage remains pinned at `node:22-alpine3.20`.
+2. **Documentation & Version References** (`README.md`, `docs/architecture/overview.md`, `docs/development-ledger.md`):
+   - Updated all references and ASCII architecture diagrams from Nginx 1.27.2 to Nginx 1.30.6.
+   - Clarified Compose verification notes: the custom validator (`scratch/validate_compose.py`) is static AST/YAML validation only; because Docker is not installed on this machine, no live `docker compose config`, `docker build`, or container smoke runs were executed.
+
+#### Verification Evidence
+- **Frontend Vitest**: 83 passed across 6 test suites (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite (`npm.cmd run build`).
+- **Backend Pytest**: 138 passed from Stage 4.5 (backend files untouched in this correction).
+- **Static Compose Validation**: Structural assertions pass cleanly via `scratch/validate_compose.py`.
+- **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
+- **Secret Scan**: Clean, zero secrets detected.

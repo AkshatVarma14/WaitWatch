@@ -111,9 +111,11 @@ docker compose down
 1. **`db`** (`postgis/postgis:16-3.4`): Starts PostgreSQL/PostGIS and verifies readiness via `pg_isready` health check. Data persists in named volume `waitwatch-pgdata`.
 2. **`migrate`** (`waitwatch-api:0.1.0`): One-shot container that waits for `db` to be healthy, executes `alembic upgrade head` to apply all database migrations safely, and exits cleanly. This prevents concurrent migration race conditions on restarts or scaling.
 3. **`api`** (`waitwatch-api:0.1.0`): Starts FastAPI on port 8000 only after `migrate` completes successfully (`condition: service_completed_successfully`) and `db` is healthy. Verified via native Python `GET /api/health` health check.
-4. **`web`** (`waitwatch-web:0.1.0`): Multi-stage build (`node:22-alpine` builder + `nginx:1.27.2-alpine` runtime) serving the React SPA on port 3000 (`http://localhost:3000`) and reverse-proxying `/api/` to the backend. Verified via Nginx `/health` check.
+4. **`web`** (`waitwatch-web:0.1.0`): Multi-stage build (`node:22-alpine` builder + `nginx:1.30.6-alpine` runtime) serving the React SPA on port 3000 (`http://localhost:3000`) and reverse-proxying `/api/` to the backend. Verified via Nginx `/health` check.
 
 > **Browser Networking Note**: Client-side JavaScript executes in the user's browser, not inside the Docker network. Use `http://localhost:8000` (or leave empty `""` to use Nginx reverse proxying). Never set `VITE_API_URL` to internal Docker hostnames like `http://api:8000`.
+
+> **Verification Note**: Docker is not installed on this local Windows development host; Compose verification is performed via static configuration and dependency analysis rather than live `docker compose up` execution.
 
 ## Environment Configuration
 
@@ -217,7 +219,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - Frontend integration: `TRIP_UPDATE` prediction source formatting with prominent "Live TripUpdate" badge styling in `ArrivalsBoard`.
   - Comprehensive test suite: 82 Vitest frontend tests across 6 files, and 136 Pytest backend tests across 10 files.
 - **Stage 4, Slice 4.5**: Docker Compose Production Scaffolding & Application Polish:
-  - Multi-service Docker Compose topology (`db`, `migrate`, `api`, `web`) with pinned base images (`postgis/postgis:16-3.4`, `python:3.12-slim-bookworm`, `node:22-alpine3.20`, `nginx:1.27.2-alpine`).
+  - Multi-service Docker Compose topology (`db`, `migrate`, `api`, `web`) with pinned base images (`postgis/postgis:16-3.4`, `python:3.12-slim-bookworm`, `node:22-alpine3.20`, `nginx:1.30.6-alpine`).
   - Safe, non-root API containerization with unprivileged `waitwatch` runtime user and zero-dependency Python standard library health check.
   - Safe, isolated migration runner (`migrate` service) guaranteeing Alembic migrations execute once to completion before FastAPI serves requests, preventing competing migration processes on restart or scaling.
   - High-performance Nginx SPA runtime with gzip compression, long-term static asset caching, SPA client-side fallback, dedicated container health check, and internal reverse proxy for `/api/` traffic.

@@ -252,7 +252,7 @@ WaitWatch provides a reproducible Docker Compose architecture (`docker-compose.y
 │                                                                        │
 │   ┌──────────────────┐               ┌─────────────────────────────┐   │
 │   │   waitwatch-web  │               │        waitwatch-api        │   │
-│   │  (Nginx 1.27.2)  │─── /api/ ────►│        (FastAPI 3.12)       │   │
+│   │  (Nginx 1.30.6)  │─── /api/ ────►│        (FastAPI 3.12)       │   │
 │   │    Port: 3000    │               │          Port: 8000         │   │
 │   └─────────▲────────┘               └──────────────┬──────────────┘   │
 │             │                                       │                  │
@@ -289,7 +289,7 @@ WaitWatch provides a reproducible Docker Compose architecture (`docker-compose.y
    - Starts only after `migrate` completes cleanly (`condition: service_completed_successfully`) and `db` is healthy.
    - Native healthcheck: invokes `urllib.request.urlopen("http://127.0.0.1:8000/api/health")` using Python's standard library, verifying application and database connectivity without external shell dependencies.
 4. **`web` (React SPA + Nginx Reverse Proxy)**:
-   - Multi-stage build: compiled with pinned `node:22-alpine3.20` and served via pinned `nginx:1.27.2-alpine`.
+   - Multi-stage build: compiled with pinned `node:22-alpine3.20` and served via pinned `nginx:1.30.6-alpine`.
    - Nginx delivers gzip-compressed static assets with immutable cache headers and SPA client-side fallback (`try_files $uri $uri/ /index.html`).
    - Built-in reverse proxy routes `/api/` traffic directly to `http://api:8000/api/` on the internal bridge network.
    - Dedicated healthcheck at `/health` returning HTTP 200 without access log spam.
@@ -306,6 +306,7 @@ While the Docker Compose stack provides a robust foundation for local developmen
 - **TLS Termination**: Provisioning SSL/TLS certificates (e.g. via Let's Encrypt / Certbot, Cloudflare, or an external Ingress Controller) in front of port 80/443.
 - **Managed Database**: Replacing the local containerized PostgreSQL instance with a high-availability managed database (e.g. AWS RDS Aurora PostgreSQL with PostGIS, GCP Cloud SQL) for automated failover, replication, and point-in-time backups.
 - **Horizontal Scaling & Worker Schedulers**: Moving periodic GTFS static ingestion and GTFS-RT pollers into isolated worker processes managed by Celery, temporal, or Kubernetes CronJobs.
+- **Local Verification Limitation**: Docker is not installed on this development machine; Compose verification was conducted strictly via static YAML schema, AST, and dependency condition assertions (`scratch/validate_compose.py`), not via live Docker daemon execution, image building, or container smoke testing.
 
 ## Current Status
 
