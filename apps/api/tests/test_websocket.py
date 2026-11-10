@@ -2,17 +2,18 @@
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from starlette.websockets import WebSocketState
 
-from app.database.session import Base, get_session
-from app.main import app
+from app.api.websocket import feed_live_updates_ws
+from app.database.session import Base
 from app.models.feed import TransitFeed
 from app.services.realtime.db_listener import run_db_listener
 from app.services.realtime.events import (
@@ -22,6 +23,42 @@ from app.services.realtime.events import (
     publish_feed_update,
 )
 from app.services.realtime.websocket_manager import ConnectionManager, ws_manager
+
+
+class MockEndpointWebSocket:
+    """Mock WebSocket for unit testing the live updates endpoint asynchronously."""
+
+    def __init__(self, incoming: list[str] | None = None) -> None:
+        self.accepted = False
+        self.closed = False
+        self.close_code: int | None = None
+        self.close_reason: str | None = None
+        self.sent_json: list[dict[str, Any]] = []
+        self.sent_text: list[str] = []
+        self.client_state = WebSocketState.CONNECTED
+        self._incoming = list(incoming or [])
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def send_json(self, data: dict[str, Any]) -> None:
+        self.sent_json.append(data)
+
+    async def send_text(self, text: str) -> None:
+        self.sent_text.append(text)
+
+    async def receive_text(self) -> str:
+        if self._incoming:
+            return self._incoming.pop(0)
+        from fastapi import WebSocketDisconnect
+
+        raise WebSocketDisconnect(code=1000)
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.closed = True
+        self.close_code = code
+        self.close_reason = reason
+        self.client_state = WebSocketState.DISCONNECTED
 
 
 @pytest.fixture
@@ -53,48 +90,50 @@ async def ws_test_db():
         session.add_all([feed1, feed2])
         await session.commit()
 
-    async def override_get_session():
-        async with session_maker() as s:
-            try:
-                yield s
-            except Exception:
-                await s.rollback()
-                raise
-            finally:
-                await s.close()
-
-    app.dependency_overrides[get_session] = override_get_session
     yield session_maker
-    app.dependency_overrides.pop(get_session, None)
     await ws_manager.close_all()
     await engine.dispose()
 
 
-def test_websocket_unknown_feed_rejected(ws_test_db):
+@pytest.mark.asyncio
+async def test_websocket_unknown_feed_rejected(ws_test_db):
     """Test that connecting to a non-existent feed slug is safely rejected."""
-    with TestClient(app) as client:
-        with client.websocket_connect(
-            "/api/v1/feeds/non-existent-feed/ws"
-        ) as websocket:
-            data = websocket.receive_json()
-            assert data["type"] == "error"
-            assert "not found" in data["message"].lower()
+    session_maker = ws_test_db
+    mock_ws = MockEndpointWebSocket()
+    async with session_maker() as session:
+        await feed_live_updates_ws(
+            websocket=mock_ws,  # type: ignore[arg-type]
+            feed_slug="non-existent-feed",
+            session=session,
+        )
+
+    assert mock_ws.accepted is True
+    assert len(mock_ws.sent_json) == 1
+    assert mock_ws.sent_json[0]["type"] == "error"
+    assert "not found" in mock_ws.sent_json[0]["message"].lower()
+    assert mock_ws.closed is True
+    assert mock_ws.close_code == 1008
 
 
-def test_websocket_valid_feed_connected_and_ping(ws_test_db):
+@pytest.mark.asyncio
+async def test_websocket_valid_feed_connected_and_ping(ws_test_db):
     """Test connecting to a valid feed receives connected message and pong on ping."""
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/v1/feeds/metro-city/ws") as websocket:
-            data = websocket.receive_json()
-            assert data["type"] == "connected"
-            assert data["feed_slug"] == "metro-city"
-            assert "feed_id" in data
-            assert "timestamp" in data
+    session_maker = ws_test_db
+    mock_ws = MockEndpointWebSocket(incoming=["ping"])
+    async with session_maker() as session:
+        await feed_live_updates_ws(
+            websocket=mock_ws,  # type: ignore[arg-type]
+            feed_slug="metro-city",
+            session=session,
+        )
 
-            # Test heartbeat
-            websocket.send_text("ping")
-            resp = websocket.receive_text()
-            assert resp == "pong"
+    assert mock_ws.accepted is True
+    assert len(mock_ws.sent_json) == 1
+    assert mock_ws.sent_json[0]["type"] == "connected"
+    assert mock_ws.sent_json[0]["feed_slug"] == "metro-city"
+    assert "feed_id" in mock_ws.sent_json[0]
+    assert "timestamp" in mock_ws.sent_json[0]
+    assert mock_ws.sent_text == ["pong"]
 
 
 @pytest.mark.asyncio
