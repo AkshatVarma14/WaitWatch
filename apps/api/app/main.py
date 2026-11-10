@@ -3,8 +3,10 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.api.router import api_router
 from app.core.config import settings
@@ -36,6 +38,29 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(OperationalError)
+async def operational_error_handler(
+    request: Request, exc: OperationalError
+) -> JSONResponse:
+    """Sanitize database operational/connection errors into 503 responses."""
+    logger.warning("Database unavailable: %s", type(exc).__name__)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Database service is temporarily unavailable"},
+    )
+
+
+@app.exception_handler(DBAPIError)
+async def dbapi_error_handler(request: Request, exc: DBAPIError) -> JSONResponse:
+    """Sanitize database DBAPI errors into 503 responses."""
+    logger.warning("Database error: %s", type(exc).__name__)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Database service is temporarily unavailable"},
+    )
+
 
 # CORS
 app.add_middleware(

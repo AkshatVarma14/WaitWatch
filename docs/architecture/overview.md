@@ -107,19 +107,28 @@ Calculates estimated arrival times at stops using:
 
 Produces ETA updates that are broadcast via WebSocket to subscribed clients.
 
-### 4. REST API — `Partial`
+### 4. REST API — `Implemented (Slice 1.3)`
 
 Currently implemented:
-- Health check / root endpoint
+- Health check (`GET /api/v1/health`, `GET /health`)
+- Root endpoint (`GET /api/v1/`, `GET /`)
+- Feeds exploration:
+  - `GET /api/v1/feeds` — list configured transit feeds with summary status
+  - `GET /api/v1/feeds/{feed_slug}` — feed configuration and import metadata
+- Route exploration:
+  - `GET /api/v1/feeds/{feed_slug}/routes` — list and search routes (`q`, `route_type`, `agency_id`, bounded pagination)
+  - `GET /api/v1/feeds/{feed_slug}/routes/{route_id}` — detailed route metadata with operating agency details
+- Stop exploration:
+  - `GET /api/v1/feeds/{feed_slug}/stops` — list and search stops (`q`, bounded pagination)
+  - `GET /api/v1/feeds/{feed_slug}/stops/nearby` — geospatial proximity stop search (`latitude`, `longitude`, `radius_meters`, `limit`) via PostGIS `ST_DWithin`/`ST_Distance` with SQLite fallback
+  - `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}` — stop details with parent station resolution
+- Error handling: Sanitized 503 response on database unavailability without credential leakage
+- Consistent response envelopes (`ItemEnvelope`, `PaginatedResponse` with `PaginationMeta`)
 
 Planned endpoints:
-- `GET /routes` — list all routes with optional filtering
-- `GET /routes/{id}` — route details with shape geometry
-- `GET /stops` — list stops, with geospatial proximity search
-- `GET /stops/{id}` — stop details with upcoming arrivals
-- `GET /trips/{id}` — trip details with stop times
-- `GET /vehicles` — current vehicle positions
-- `GET /eta/{stop_id}` — predicted arrival times for a stop
+- `GET /trips/{id}` — trip details with stop times (Stage 2)
+- `GET /vehicles` — current vehicle positions (Stage 2)
+- `GET /eta/{stop_id}` — predicted arrival times for a stop (Stage 3)
 
 ### 5. WebSocket Server — `Planned`
 

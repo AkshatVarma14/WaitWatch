@@ -167,4 +167,56 @@ This document tracks verified stage milestones, implementation slices, verificat
 - `docs/development-ledger.md` (this ledger)
 
 #### Next Authorized Step
-- **Stage 1, Slice 1.3**: Transit Query API & Route/Stop Exploration Endpoints (or Stage 1 conclusion according to roadmap).
+- **Stage 1, Slice 1.3**: Transit Query API & Route/Stop Exploration Endpoints (Completed below).
+
+---
+
+### Slice 1.3: Transit Query API and Route/Stop Exploration (Completed & Verified)
+
+- **Date**: 2026-11-10
+- **Goal**: Implement read-only FastAPI endpoints for exploring static transit data scoped to a `TransitFeed` slug (`/api/v1/feeds/{feed_slug}/...` and backwards-compatible `/api/feeds/{feed_slug}/...`), exposing GTFS string IDs, bounded pagination envelopes, PostGIS geospatial proximity exploration, feed isolation, and non-leaking database error handling.
+
+#### Implemented Components
+1. **Pydantic Response Schemas & Envelopes** (`apps/api/app/schemas/transit.py`):
+   - `PaginationMeta`: Bounded pagination metadata (`total`, `page`, `page_size`, `total_pages`, `has_next`, `has_prev`).
+   - `PaginatedResponse[T]` & `ItemEnvelope[T]`: Standard data wrapping envelopes.
+   - `RouteResponse` & `RouteDetailResponse`: Exposing GTFS `route_id`, names, type, colors, and nested operating agency details.
+   - `StopResponse` & `StopDetailResponse`: Exposing GTFS `stop_id`, code, coordinates, location/accessibility attributes, and resolved `parent_station_id` (GTFS string identifier).
+   - `NearbyStopResponse`: Inherits from `StopResponse` with computed `distance_meters`.
+   - `FeedSummaryResponse` & `FeedDetailResponse`: City, slug, feed URLs, and operational status.
+2. **Read-Only Transit Query Endpoints** (`apps/api/app/api/transit.py`):
+   - `GET /feeds`: List configured feeds with summary status.
+   - `GET /feeds/{feed_slug}`: Specific feed metadata.
+   - `GET /feeds/{feed_slug}/routes`: List & search routes with optional `q` text search across short/long name, `route_type` integer filter, `agency_id` filter, and bounded pagination (default 20, max 100). Uses `joinedload(Route.agency)` for performance.
+   - `GET /feeds/{feed_slug}/routes/{route_id}`: Detail view for a route by its GTFS string ID.
+   - `GET /feeds/{feed_slug}/stops`: List & search stops with `q` text search across name, code, or stop ID, and bounded pagination. Uses `joinedload(Stop.parent_station)`.
+   - `GET /feeds/{feed_slug}/stops/nearby`: Geospatial proximity search with WGS84 coordinates (`latitude`, `longitude`), `radius_meters` (max 50,000m), and `limit` (max 100). Declared before `{stop_id}` to avoid routing conflict. Uses PostGIS `ST_DWithin` and `ST_Distance` on PostgreSQL, with an automatic bounding box + haversine distance fallback on SQLite.
+   - `GET /feeds/{feed_slug}/stops/{stop_id}`: Detail view for a stop by its GTFS string ID.
+   - Registered under `/v1` prefix and unprefixed for backwards compatibility in `apps/api/app/api/router.py`.
+3. **Database Unavailable Sanitization** (`apps/api/app/main.py`):
+   - Global exception handlers for `OperationalError` and `DBAPIError` mapping to HTTP 503 `{"detail": "Database service is temporarily unavailable"}` without exposing internal database credentials or connection strings in logs or response bodies.
+4. **Comprehensive API Test Suite** (`apps/api/tests/test_transit_api.py`):
+   - 17 new tests covering feed listing/detail/404, route listing/detail/isolation/filters, stop listing/detail/isolation, nearby stops with distance sorting, coordinate validation bounds, database 503 error handling, and backwards-compatible routing.
+
+#### Verification Evidence
+- **Pytest**: 59 tests passed in 7.28s (`py -3.12 -m pytest tests -v`).
+- **Ruff**: Zero lint errors and clean formatting across `app/`, `tests/`, and `alembic/` (`py -3.12 -m ruff check app tests alembic` and `py -3.12 -m ruff format --check app tests alembic`).
+- **Python Compilation**: All backend modules compile cleanly (`py -3.12 -m compileall app tests alembic`).
+- **Alembic Offline Validation**: `alembic upgrade head --sql` passed and generated clean DDL.
+- **Frontend Regression**:
+  - `npm.cmd test -- --run`: 2 test files, 6 tests passed in 3.32s.
+  - `npm.cmd run build`: production build passed in 2.42s without errors.
+
+#### Changed / Added Files
+- `apps/api/app/schemas/transit.py` (new Pydantic schemas and envelopes)
+- `apps/api/app/schemas/__init__.py` (re-exported transit schemas)
+- `apps/api/app/api/transit.py` (new router with feed, route, stop, and nearby endpoints)
+- `apps/api/app/api/router.py` (registered transit router under `/v1` and unprefixed)
+- `apps/api/app/main.py` (added database error sanitization exception handlers)
+- `apps/api/tests/test_transit_api.py` (17 new endpoint integration tests)
+- `docs/architecture/overview.md` (updated REST API status)
+- `README.md` (updated development status and milestones)
+- `docs/development-ledger.md` (this ledger)
+
+#### Next Authorized Step
+- **Stage 1 Conclusion / Stage 2 Preparation**: Await authorization for the next stage or slice in accordance with project instructions.
