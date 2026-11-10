@@ -72,27 +72,29 @@ async def ws_test_db():
 
 def test_websocket_unknown_feed_rejected(ws_test_db):
     """Test that connecting to a non-existent feed slug is safely rejected."""
-    client = TestClient(app)
-    with client.websocket_connect("/api/v1/feeds/non-existent-feed/ws") as websocket:
-        data = websocket.receive_json()
-        assert data["type"] == "error"
-        assert "not found" in data["message"].lower()
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            "/api/v1/feeds/non-existent-feed/ws"
+        ) as websocket:
+            data = websocket.receive_json()
+            assert data["type"] == "error"
+            assert "not found" in data["message"].lower()
 
 
 def test_websocket_valid_feed_connected_and_ping(ws_test_db):
     """Test connecting to a valid feed receives connected message and pong on ping."""
-    client = TestClient(app)
-    with client.websocket_connect("/api/v1/feeds/metro-city/ws") as websocket:
-        data = websocket.receive_json()
-        assert data["type"] == "connected"
-        assert data["feed_slug"] == "metro-city"
-        assert "feed_id" in data
-        assert "timestamp" in data
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/v1/feeds/metro-city/ws") as websocket:
+            data = websocket.receive_json()
+            assert data["type"] == "connected"
+            assert data["feed_slug"] == "metro-city"
+            assert "feed_id" in data
+            assert "timestamp" in data
 
-        # Test heartbeat
-        websocket.send_text("ping")
-        resp = websocket.receive_text()
-        assert resp == "pong"
+            # Test heartbeat
+            websocket.send_text("ping")
+            resp = websocket.receive_text()
+            assert resp == "pong"
 
 
 @pytest.mark.asyncio

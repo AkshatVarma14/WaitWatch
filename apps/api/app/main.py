@@ -31,15 +31,18 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         settings.sanitized_database_url,
     )
     stop_event = asyncio.Event()
-    listener_task = asyncio.create_task(run_db_listener(ws_manager, stop_event))
+    listener_task: asyncio.Task[None] | None = None
+    if settings.environment != "test":
+        listener_task = asyncio.create_task(run_db_listener(ws_manager, stop_event))
     yield
     logger.info("WaitWatch API shutting down")
     stop_event.set()
-    listener_task.cancel()
-    try:
-        await asyncio.wait_for(listener_task, timeout=2.0)
-    except (TimeoutError, asyncio.CancelledError):
-        pass
+    if listener_task is not None:
+        listener_task.cancel()
+        try:
+            await asyncio.wait_for(listener_task, timeout=2.0)
+        except (TimeoutError, asyncio.CancelledError):
+            pass
     await ws_manager.close_all()
     await engine.dispose()
 
