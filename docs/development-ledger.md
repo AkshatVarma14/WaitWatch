@@ -1151,3 +1151,48 @@ Addressed a correctness finding in `apps/api/app/api/transit.py` where omitted `
 - `README.md` (updated milestone notes and test suite counts)
 - `docs/architecture/overview.md` (documented timezone resolution logic)
 - `docs/development-ledger.md` (this ledger entry)
+
+---
+
+### 2026-11-10 — Project Deployability & Testability Checkpoint
+
+#### Overview
+Conducted a comprehensive, code-level deployability and testability readiness audit of the WaitWatch repository against a concrete operational checklist: configuration and secrets handling, migration integrity, container health and readiness checks, application lifecycle (startup/shutdown), CORS and environment isolation, reproducible local setup, test/lint/typecheck/build gates, CI workflow coverage, and operational constraints. Hardened `.github/workflows/backend.yml` to mirror all local quality gates by adding `ruff format --check` and `python -m compileall`. Confirmed that all 169 backend Pytest tests, all 104 frontend Vitest tests, TypeScript compilation, and production Vite asset builds pass cleanly.
+
+#### Readiness Checklist Audit Summary
+1. **Configuration & Secrets Handling**:
+   - Pydantic Settings in `apps/api/app/core/config.py` loads environment variables with URL normalization (`postgresql://` to `postgresql+asyncpg://`) and credential masking via `sanitized_database_url`.
+   - `.env.example` provides a non-functional, template-only configuration with explicit production guidance. Zero secrets, credentials, or private tokens exist in git history or working tree.
+2. **Database Migrations**:
+   - Alembic migration chain comprises 6 sequential, fully reversible revisions (`0001_initial_transit_models` through `0006_trip_updates`).
+   - Verified offline static SQL generation via `alembic upgrade head --sql`.
+   - Docker Compose uses an isolated one-shot migration runner (`waitwatch-migrate`) with `condition: service_completed_successfully` before API startup.
+3. **Health & Readiness Endpoints**:
+   - Backend exposes `/api/health` and `/api/v1/health` with non-leaking real database connectivity testing via `SELECT 1` with timeout protection.
+   - Frontend Nginx exposes `/health` returning HTTP 200 text status.
+   - Docker Compose and Dockerfile healthchecks verify services natively (`pg_isready` for Postgres, Python stdlib `urllib` for API without curl dependencies, and alpine `wget` for web).
+4. **Application Lifecycle & Clean Shutdown**:
+   - FastAPI lifespan in `main.py` initializes database listener and handles graceful shutdown: sets stop event, cancels listener task with timeout, closes all WebSocket connections (`close_all()`), and disposes engine pool.
+5. **CORS & Environment Setup**:
+   - Standard CORS default origins cover web ports (3000, 5173 on localhost and 127.0.0.1) and allow environment expansion.
+   - Frontend Vite environment variables (`VITE_API_URL`, `VITE_MAP_TILE_URL`, `VITE_POLLING_INTERVAL_SEC`) are supported via build arguments and runtime defaults.
+6. **CI Gate Hardening** (`.github/workflows/backend.yml`):
+   - Aligned GitHub Actions Backend CI with local quality gates: added `ruff format --check app/ tests/` and `python -m compileall app/ tests/` alongside existing `ruff check` and pytest.
+7. **Operational Limitations & Remaining Runtime Validation**:
+   - Docker daemon is not installed on this local development host; container image builds, multi-container networking, and live Compose runs remain runtime validation tasks for container-enabled environments.
+   - External transit feed polling remains in offline/mock mode; live upstream transit API ingestion is disabled by policy.
+
+#### Verification Evidence
+- **Backend Pytest**: 169 passed across 12 test suites in 14.44s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint or formatting errors (`py -3.12 -m ruff check apps/api; py -3.12 -m ruff format --check apps/api`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall apps/api/app apps/api/tests`).
+- **Frontend Vitest**: 104 passed across 8 test suites in 5.45s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run type-check`).
+- **Frontend Production Build**: Built cleanly with Vite in 2.65s (`npm.cmd run build`).
+- **Alembic Offline SQL Generation**: Generated clean PostgreSQL DDL through `0006_trip_updates`.
+- **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
+- **Secret Scan**: Clean, zero secrets detected.
+
+#### Changed Files
+- `.github/workflows/backend.yml` (enforced ruff format and compileall in CI)
+- `docs/development-ledger.md` (this readiness checkpoint entry)

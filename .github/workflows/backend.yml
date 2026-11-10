@@ -28,11 +28,15 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Lint with ruff
-        run: ruff check app/ tests/
+      - name: Lint and format with ruff
+        run: |
+          ruff check app/ tests/
+          ruff format --check app/ tests/
 
       - name: Test
         run: pytest -v
 
-      - name: Verify app imports
-        run: python -c "from app.main import app; print('App loaded successfully')"
+      - name: Verify compilation and app imports
+        run: |
+          python -m compileall app/ tests/
+          python -c "from app.main import app; print('App loaded successfully')"
