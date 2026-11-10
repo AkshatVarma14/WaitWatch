@@ -4,6 +4,8 @@ import {
   fetchArrivals,
   fetchFeeds,
   fetchHealth,
+  fetchRouteMap,
+  fetchRoutes,
   fetchStops,
 } from "../lib/api";
 
@@ -63,6 +65,56 @@ describe("api client", () => {
     expect(feeds).toEqual(mockFeeds);
     expect(fetchSpy).toHaveBeenCalledWith(
       expect.stringContaining("/api/v1/feeds"),
+    );
+  });
+
+  it("fetchRoutes requests /api/v1/feeds/:slug/routes with query params", async () => {
+    const mockRoutesResponse = {
+      data: [{ route_id: "R1", short_name: "101" }],
+      pagination: {
+        total: 1,
+        page: 1,
+        page_size: 50,
+        total_pages: 1,
+        has_next: false,
+        has_prev: false,
+      },
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(mockRoutesResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const res = await fetchRoutes("metro-city", "express", 1, 50);
+    expect(res).toEqual(mockRoutesResponse);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /\/api\/v1\/feeds\/metro-city\/routes\?page=1&page_size=50&q=express/,
+      ),
+    );
+  });
+
+  it("fetchRouteMap requests /api/v1/feeds/:slug/routes/:id/map", async () => {
+    const mockMapData = {
+      feed_slug: "metro-city",
+      route_id: "R1",
+      shapes: [],
+      stops: [],
+      vehicles: [],
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: mockMapData }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const res = await fetchRouteMap("metro-city", "R1");
+    expect(res).toEqual(mockMapData);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/v1\/feeds\/metro-city\/routes\/R1\/map/),
     );
   });
 

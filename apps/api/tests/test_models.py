@@ -8,6 +8,7 @@ from app.models import (
     Calendar,
     CalendarDate,
     Route,
+    Shape,
     Stop,
     StopTime,
     TransitFeed,
@@ -18,7 +19,7 @@ from app.models import (
 
 
 def test_metadata_contains_all_models() -> None:
-    """Verify all transit tables including vehicle_observations are registered."""
+    """Verify all transit tables including shapes are registered."""
     table_names = set(Base.metadata.tables.keys())
     expected = {
         "transit_feeds",
@@ -31,6 +32,7 @@ def test_metadata_contains_all_models() -> None:
         "calendar_dates",
         "vehicle_positions",
         "vehicle_observations",
+        "shapes",
     }
     assert expected.issubset(table_names), f"Missing tables: {expected - table_names}"
 
@@ -387,3 +389,34 @@ def test_vehicle_observation_model_structure() -> None:
         if uc.__class__.__name__ == "UniqueConstraint"
     }
     assert ("feed_id", "entity_id", "observed_at") in unique_constraints
+
+
+def test_shape_model_structure() -> None:
+    """Verify columns, constraints, and relationships on Shape model."""
+    mapper = inspect(Shape)
+    columns = {c.name for c in mapper.columns}
+    expected_cols = {
+        "id",
+        "feed_id",
+        "shape_id",
+        "shape_pt_lat",
+        "shape_pt_lon",
+        "shape_pt_sequence",
+        "shape_dist_traveled",
+        "point",
+        "created_at",
+        "updated_at",
+    }
+    assert expected_cols.issubset(columns)
+
+    # Unique constraint on (feed_id, shape_id, shape_pt_sequence)
+    unique_constraints = {
+        tuple(col.name for col in uc.columns)
+        for uc in mapper.persist_selectable.constraints
+        if uc.__class__.__name__ == "UniqueConstraint"
+    }
+    assert ("feed_id", "shape_id", "shape_pt_sequence") in unique_constraints
+
+    # Relationships
+    relationships = {r.key: r.entity.class_ for r in mapper.relationships}
+    assert relationships["feed"] is TransitFeed

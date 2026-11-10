@@ -13,6 +13,7 @@ from app.models import (
     Calendar,
     CalendarDate,
     Route,
+    Shape,
     Stop,
     StopTime,
     TransitFeed,
@@ -36,6 +37,7 @@ class IngestionStats:
     calendar_dates_count: int
     trips_count: int
     stop_times_count: int
+    shapes_count: int
     imported_at: datetime
 
 
@@ -82,6 +84,7 @@ async def persist_feed_data(
         await session.execute(delete(StopTime).where(StopTime.feed_id == feed_id))
         await session.execute(delete(Trip).where(Trip.feed_id == feed_id))
         await session.execute(delete(Route).where(Route.feed_id == feed_id))
+        await session.execute(delete(Shape).where(Shape.feed_id == feed_id))
 
         # Break any self-referencing parent station foreign keys before deleting stops
         await session.execute(
@@ -280,7 +283,29 @@ async def persist_feed_data(
             session.add_all(chunk_entities)
             await session.flush()
 
-        # 9. Update Feed Import Timestamp & Status
+        # 9. Insert Shapes (in bounded chunks)
+        total_shapes = 0
+        for i in range(0, len(data.shapes), batch_size):
+            chunk = data.shapes[i : i + batch_size]
+            chunk_entities = []
+            for s in chunk:
+                wkt = f"SRID=4326;POINT({s.shape_pt_lon} {s.shape_pt_lat})"
+                chunk_entities.append(
+                    Shape(
+                        feed_id=feed_id,
+                        shape_id=s.shape_id,
+                        shape_pt_lat=s.shape_pt_lat,
+                        shape_pt_lon=s.shape_pt_lon,
+                        shape_pt_sequence=s.shape_pt_sequence,
+                        shape_dist_traveled=s.shape_dist_traveled,
+                        point=WKTElement(wkt, srid=4326),
+                    )
+                )
+            session.add_all(chunk_entities)
+            await session.flush()
+            total_shapes += len(chunk_entities)
+
+        # 10. Update Feed Import Timestamp & Status
         now = datetime.now(UTC)
         feed.last_static_import_at = now
         feed.feed_status = "active"
@@ -295,6 +320,7 @@ async def persist_feed_data(
             calendar_dates_count=len(calendar_date_entities),
             trips_count=len(trip_entities),
             stop_times_count=total_stop_times,
+            shapes_count=total_shapes,
             imported_at=now,
         )
         logger.info(

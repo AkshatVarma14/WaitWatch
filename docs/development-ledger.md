@@ -536,3 +536,86 @@ This document tracks verified stage milestones, implementation slices, verificat
   - Stop arrivals are currently refreshed via manual button or on initial load; automated polling or WebSocket push is not yet enabled.
 - **Next Authorized Step**:
   - **Stage 4, Slice 4.2**: Interactive Map Component & Route Visualization.
+
+### 2026-11-10 — Stage 4, Slice 4.2: Interactive Map & Route Visualization
+
+#### Overview
+Implemented the interactive route and vehicle map visualization for the WaitWatch transit platform. Built an interactive, feed-scoped map with Leaflet that displays a selected route, its ordered passenger stops, and current vehicle positions. To ensure accurate geometry representation, implemented the database model, schema, and parser/importer for GTFS `shapes.txt` with PostGIS geography point indexing, and established an explicit rule and UI behavior to never fabricate route lines from stops when GTFS shapes are unavailable. Configured customizable tile URLs via `VITE_MAP_TILE_URL` with visible OpenStreetMap attribution and documented third-party tile usage policies.
+
+#### Key Deliverables & Design Decisions
+1. **GTFS Shapes Database Model & Migration** (`apps/api/app/models/shape.py`, `apps/api/alembic/versions/0005_shapes.py`):
+   - `Shape` model containing `id`, `feed_id`, `shape_id`, `shape_pt_lat`, `shape_pt_lon`, `shape_pt_sequence`, `shape_dist_traveled`, PostGIS `point` (`geography(POINT, 4326)`), timestamps, unique constraint `uq_shapes_feed_shape_seq (feed_id, shape_id, shape_pt_sequence)`, and spatial GiST index.
+   - Forward migration `0005_shapes` with clean offline upgrade and downgrade SQL generation.
+2. **GTFS Schedule Shapes Parser & Importer** (`apps/api/app/services/gtfs/parser.py`, `importer.py`):
+   - Parsed and validated `shapes.txt` records with coordinate bounds checking (`[-90, 90]`, `[-180, 180]`), sequence validation, duplicate sequence rejection, and optional distance traveled parsing. Handled absent `shapes.txt` gracefully as an optional GTFS Schedule component.
+   - Batch insertion into `shapes` table with feed-scoped deletion for atomic, idempotent feed replacement.
+3. **Route Map REST API Endpoint** (`apps/api/app/api/transit.py`, `apps/api/app/schemas/transit.py`):
+   - Added `GET /api/v1/feeds/{feed_slug}/routes/{route_id}/map` returning route metadata, ordered shape point sequences, ordered stops served by the route, and fresh live vehicles.
+   - **No Fabricated Shapes**: Routes without shapes return `shapes: []` without synthetic stop-to-stop lines.
+   - **Fresh Vehicle Telemetry**: Excludes stale vehicles with telemetry older than 300 seconds (`func.coalesce(vehicle_timestamp, feed_timestamp, recorded_at)`).
+   - Feed isolation and public metadata only: internal credentials and URLs are omitted.
+4. **Interactive Map Component (`MapView`)** (`apps/web/src/components/mapView.tsx`):
+   - Leaflet map rendering true shape polylines in route colors (`#3b82f6` default), circular stop markers with tooltips and click-to-select, and bearing-rotated vehicle markers.
+   - When shapes are absent, displays an explicit status pill (`⚠️ Route shape unavailable — showing stops only`) rather than drawing synthetic lines.
+   - Dynamic viewport auto-fit using `map.fitBounds` across all route features, window resize listener, and loading/error states with retry.
+   - Tile provider configurable via `VITE_MAP_TILE_URL` defaulting to standard OpenStreetMap tiles, with mandatory, visible attribution (`&copy; OpenStreetMap contributors`).
+5. **Route Selector & Map Details Panel** (`apps/web/src/components/routeSelector.tsx`, `apps/web/src/components/mapDetailsPanel.tsx`):
+   - `RouteSelector`: Dropdown combobox for choosing routes within the selected feed with route type/color badges and loading/error states.
+   - `MapDetailsPanel`: Dual-tab inspector displaying ordered stops and live vehicle telemetry cards (speed in km/h, bearing in degrees, coordinates, transit status, observation age).
+6. **Feed and Route Isolation** (`apps/web/src/stores/appStore.ts`):
+   - Zustand store resets `selectedRouteId`, `selectedStop`, and `selectedVehicleId` when the feed changes. Changing route resets `selectedVehicleId`.
+7. **Comprehensive Unit & Integration Test Suites**:
+   - Backend tests (114 tests total): tested shape model constraints, migration downgrade/upgrade, parser validation, idempotent importer, route map API success, missing shape handling, fresh vs stale vehicle filtering, and cross-feed isolation.
+   - Frontend tests (65 tests total): tested store route/vehicle actions, api client `fetchRoutes` and `fetchRouteMap`, `RouteSelector`, `MapView` (with shapes, missing shape alert, live vehicle badges, tile attribution), `MapDetailsPanel` (tabs, stop selection, vehicle telemetry inspector), and end-to-end feed switching isolation.
+
+#### Tile Usage Policy & Production Note
+The default tile layer uses OpenStreetMap's standard tile service (`https://tile.openstreetmap.org/{z}/{x}/{y}.png`). In accordance with the OpenStreetMap Tile Usage Policy:
+- OSM standard tile servers are intended for development, testing, and limited low-volume personal use; heavy or production traffic should point `VITE_MAP_TILE_URL` to a dedicated vector/raster tile service (such as Protomaps, Mapbox, Stadia Maps, or self-hosted tile servers).
+- Attribution (`&copy; OpenStreetMap contributors`) is visibly preserved on all screen sizes in accordance with the ODbL license.
+
+#### Verification Evidence
+- **Frontend Vitest**: 65 tests passed across 5 test suites in 4.04s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite in 2.55s (`npm.cmd run build`).
+- **Backend Pytest**: 114 tests passed in 10.71s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint errors and clean formatting across 52 files (`py -3.12 -m ruff check app tests`, `py -3.12 -m ruff format --check app tests`).
+- **Backend Compilation**: Clean bytecode compilation with Python 3.12 (`py -3.12 -m compileall app tests alembic`).
+- **Alembic Migrations**: Offline SQL upgrade and downgrade verified without error (`0005_shapes`).
+
+#### Changed / Added Files
+- `apps/api/app/models/shape.py` (new `Shape` model with PostGIS geography point)
+- `apps/api/app/models/feed.py` (added `shapes` relationship to `TransitFeed`)
+- `apps/api/app/models/__init__.py` (exported `Shape`)
+- `apps/api/alembic/versions/0005_shapes.py` (new migration for `shapes` table)
+- `apps/api/app/services/gtfs/parser.py` (shapes.txt parser with sequence and coordinate checks)
+- `apps/api/app/services/gtfs/importer.py` (atomic batch persistence for shapes)
+- `apps/api/app/schemas/transit.py` (new route map schemas: `RouteMapResponse`, `RouteShapeResponse`, etc.)
+- `apps/api/app/schemas/__init__.py` (exported route map schemas)
+- `apps/api/app/api/transit.py` (route map endpoint implementation)
+- `apps/api/tests/test_alembic.py` (migration chain assertions for `0005_shapes`)
+- `apps/api/tests/test_models.py` (tests for `Shape` model)
+- `apps/api/tests/test_gtfs_ingestion.py` (parser and importer tests for shapes)
+- `apps/api/tests/test_transit_api.py` (integration tests for route map endpoint)
+- `apps/web/package.json` & `package-lock.json` (installed `leaflet` and `@types/leaflet`)
+- `apps/web/.env.example` (documented `VITE_MAP_TILE_URL` and OSM usage policy)
+- `apps/web/src/types/transit.ts` (added route map, shapes, and vehicle types)
+- `apps/web/src/lib/api.ts` (added `fetchRoutes` and `fetchRouteMap`)
+- `apps/web/src/stores/appStore.ts` (route, stop, vehicle state and feed isolation)
+- `apps/web/src/components/routeSelector.tsx` (new route selector combobox)
+- `apps/web/src/components/mapView.tsx` (new Leaflet map component)
+- `apps/web/src/components/mapDetailsPanel.tsx` (new stop & live vehicle details inspector)
+- `apps/web/src/pages/Dashboard.tsx` (integrated map, route selector, and details panel)
+- `apps/web/src/__tests__/appStore.test.ts` (updated store tests)
+- `apps/web/src/__tests__/api.test.ts` (updated API client tests)
+- `apps/web/src/__tests__/Dashboard.test.tsx` (updated dashboard landmark tests)
+- `apps/web/src/__tests__/TransitExplorer.test.tsx` (expanded component & feed isolation tests)
+- `README.md` (updated Stage 4 milestones and status)
+- `docs/architecture/overview.md` (updated architecture overview with map visualization)
+- `docs/development-ledger.md` (this ledger entry)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - Live vehicles and stop arrivals are currently refreshed on component mount, route selection change, or manual button click; automated background polling or WebSocket push is not yet enabled.
+  - Map tiles rely on standard raster tile services; vector map styling is not yet integrated.
+- **Next Authorized Step**:
+  - **Stage 4, Slice 4.3**: Realtime Polling & Live Map Refresh (or GTFS-RT TripUpdates Ingestion).

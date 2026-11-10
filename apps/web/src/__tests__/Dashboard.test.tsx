@@ -30,6 +30,20 @@ describe("Dashboard", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders the feed and route selection section", () => {
+    renderWithClient(<Dashboard />);
+    expect(
+      screen.getByRole("region", { name: /Feed and route selection/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the route map visualization section", () => {
+    renderWithClient(<Dashboard />);
+    expect(
+      screen.getByRole("region", { name: /Route map visualization/i }),
+    ).toBeInTheDocument();
+  });
+
   it("renders the feed and stop navigation section", () => {
     renderWithClient(<Dashboard />);
     expect(
@@ -47,7 +61,7 @@ describe("Dashboard", () => {
   it("renders the Stage 4 status badge", () => {
     renderWithClient(<Dashboard />);
     expect(
-      screen.getByText(/Stage 4: Transit Explorer/i),
+      screen.getByText(/Stage 4: Map & Transit Explorer/i),
     ).toBeInTheDocument();
   });
 });

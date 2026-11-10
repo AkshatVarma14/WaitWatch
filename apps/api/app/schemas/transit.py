@@ -180,3 +180,92 @@ class StopArrivalPrediction(BaseModel):
         None,
         description="Timestamp of the vehicle telemetry observation in UTC",
     )
+
+
+class ShapePointResponse(BaseModel):
+    """Geographic point in a GTFS shape."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="WGS84 latitude")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="WGS84 longitude")
+    sequence: int = Field(..., ge=0, description="Point sequence within shape")
+    distance_traveled: float | None = Field(
+        None, description="Distance traveled along shape in feed units"
+    )
+
+
+class RouteShapeResponse(BaseModel):
+    """Ordered shape polyline associated with a route."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    shape_id: str = Field(..., description="GTFS shape identifier")
+    points: list[ShapePointResponse] = Field(
+        default_factory=list, description="Chronologically ordered shape points"
+    )
+
+
+class RouteMapStopResponse(BaseModel):
+    """Stop served by the route with sequence and coordinates."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    stop_id: str = Field(..., description="GTFS stop identifier")
+    name: str = Field(..., description="Stop or station name")
+    code: str | None = Field(None, description="Passenger-facing stop code")
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="WGS84 latitude")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="WGS84 longitude")
+    stop_sequence: int = Field(..., ge=0, description="Sequence on route trip")
+    direction_id: int | None = Field(None, description="Travel direction identifier")
+    wheelchair_boarding: int = Field(
+        0, description="0=no info, 1=accessible, 2=not accessible"
+    )
+
+
+class RouteMapVehicleResponse(BaseModel):
+    """Active vehicle position on this route."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    entity_id: str = Field(..., description="Realtime vehicle entity identifier")
+    vehicle_id: str | None = Field(None, description="Agency vehicle identifier")
+    vehicle_label: str | None = Field(
+        None, description="Passenger-facing vehicle label"
+    )
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="WGS84 latitude")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="WGS84 longitude")
+    bearing: float | None = Field(
+        None, ge=0.0, le=360.0, description="Heading in degrees"
+    )
+    speed: float | None = Field(None, ge=0.0, description="Speed in meters/second")
+    current_status: int | None = Field(
+        None, description="0=incoming, 1=stopped, 2=in_transit"
+    )
+    trip_id: str | None = Field(None, description="GTFS trip identifier")
+    observed_at: datetime = Field(..., description="Observation timestamp in UTC")
+
+
+class RouteMapResponse(BaseModel):
+    """Payload for rendering route geometry, stops, and active vehicles on a map."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    feed_slug: str = Field(..., description="Feed slug identifier")
+    route_id: str = Field(..., description="GTFS route identifier")
+    route_short_name: str | None = Field(None, description="Public route short name")
+    route_long_name: str | None = Field(None, description="Public route long name")
+    route_color: str | None = Field(None, description="Hex color code (e.g. #0055A5)")
+    text_color: str | None = Field(None, description="Hex text color code")
+    shapes: list[RouteShapeResponse] = Field(
+        default_factory=list,
+        description="True GTFS shapes; empty list if shapes.txt is unavailable",
+    )
+    stops: list[RouteMapStopResponse] = Field(
+        default_factory=list,
+        description="Ordered stops served along this route",
+    )
+    vehicles: list[RouteMapVehicleResponse] = Field(
+        default_factory=list,
+        description="Fresh active vehicles currently assigned to this route",
+    )

@@ -1,5 +1,7 @@
 """Tests for WaitWatch Transit Query API and Route/Stop exploration endpoints."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import OperationalError
@@ -11,7 +13,16 @@ from sqlalchemy.ext.asyncio import (
 
 from app.database.session import Base, get_session
 from app.main import app
-from app.models import Agency, Route, Stop, TransitFeed
+from app.models import (
+    Agency,
+    Route,
+    Shape,
+    Stop,
+    StopTime,
+    TransitFeed,
+    Trip,
+    VehiclePosition,
+)
 
 
 @pytest.fixture
@@ -118,6 +129,95 @@ async def test_db():
             location_type=0,
         )
         session.add_all([platform1, distant_stop])
+        await session.flush()
+
+        # Trip for Route 1 with shape
+        trip1 = Trip(
+            feed_id=feed1.id,
+            route_id=route1.id,
+            service_id="DAILY",
+            trip_id="TRIP_B101_1",
+            shape_id="SHAPE_B101",
+            direction_id=0,
+            trip_headsign="Uptown Express",
+        )
+        session.add(trip1)
+        await session.flush()
+
+        # Stop times for Trip 1
+        st1 = StopTime(
+            feed_id=feed1.id,
+            trip_id=trip1.id,
+            stop_id=platform1.id,
+            arrival_time="10:00:00",
+            departure_time="10:00:00",
+            stop_sequence=1,
+        )
+        st2 = StopTime(
+            feed_id=feed1.id,
+            trip_id=trip1.id,
+            stop_id=distant_stop.id,
+            arrival_time="10:20:00",
+            departure_time="10:20:00",
+            stop_sequence=2,
+        )
+        session.add_all([st1, st2])
+
+        # Shape points for SHAPE_B101
+        shp1 = Shape(
+            feed_id=feed1.id,
+            shape_id="SHAPE_B101",
+            shape_pt_lat=40.7130,
+            shape_pt_lon=-74.0062,
+            shape_pt_sequence=1,
+            shape_dist_traveled=0.0,
+        )
+        shp2 = Shape(
+            feed_id=feed1.id,
+            shape_id="SHAPE_B101",
+            shape_pt_lat=40.7300,
+            shape_pt_lon=-73.9950,
+            shape_pt_sequence=2,
+            shape_dist_traveled=2500.0,
+        )
+        shp3 = Shape(
+            feed_id=feed1.id,
+            shape_id="SHAPE_B101",
+            shape_pt_lat=40.7589,
+            shape_pt_lon=-73.9851,
+            shape_pt_sequence=3,
+            shape_dist_traveled=5200.0,
+        )
+        session.add_all([shp1, shp2, shp3])
+
+        # Live fresh vehicle on B101
+        now = datetime.now(UTC)
+        veh_fresh = VehiclePosition(
+            feed_id=feed1.id,
+            entity_id="VP_1",
+            vehicle_id="BUS_101",
+            vehicle_label="101A",
+            route_id="B101",
+            trip_id="TRIP_B101_1",
+            latitude=40.7200,
+            longitude=-74.0000,
+            bearing=45.0,
+            speed=12.5,
+            current_status=2,
+            vehicle_timestamp=now,
+        )
+        # Stale vehicle on B101 (>300s old)
+        veh_stale = VehiclePosition(
+            feed_id=feed1.id,
+            entity_id="VP_2",
+            vehicle_id="BUS_102",
+            route_id="B101",
+            latitude=40.7250,
+            longitude=-73.9980,
+            bearing=45.0,
+            vehicle_timestamp=now - timedelta(seconds=600),
+        )
+        session.add_all([veh_fresh, veh_stale])
 
         # Feed 2: Isolated empty feed
         feed2 = TransitFeed(
@@ -282,6 +382,81 @@ async def test_get_route_detail_not_found(api_client: AsyncClient) -> None:
     response = await api_client.get("/api/v1/feeds/metro-city/routes/NONEXISTENT")
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_route_map_success(api_client: AsyncClient) -> None:
+    """Verify route map endpoint returns shapes, stops, and vehicles."""
+    response = await api_client.get("/api/v1/feeds/metro-city/routes/B101/map")
+    assert response.status_code == 200
+    res = response.json()
+    assert "data" in res
+    data = res["data"]
+
+    # Basic route metadata
+    assert data["feed_slug"] == "metro-city"
+    assert data["route_id"] == "B101"
+    assert data["route_short_name"] == "101"
+    assert data["route_color"] == "#0055A5"
+
+    # True GTFS shapes (ordered sequence)
+    assert len(data["shapes"]) == 1
+    shape = data["shapes"][0]
+    assert shape["shape_id"] == "SHAPE_B101"
+    assert len(shape["points"]) == 3
+    assert [p["sequence"] for p in shape["points"]] == [1, 2, 3]
+    assert shape["points"][0]["latitude"] == 40.7130
+    assert shape["points"][0]["longitude"] == -74.0062
+
+    # Ordered stops served on route
+    assert len(data["stops"]) == 2
+    assert data["stops"][0]["stop_id"] == "PLATFORM_1"
+    assert data["stops"][0]["stop_sequence"] == 1
+    assert data["stops"][1]["stop_id"] == "UPTOWN_STOP"
+    assert data["stops"][1]["stop_sequence"] == 2
+
+    # Fresh vehicles only (stale vehicle > 300s must be excluded)
+    assert len(data["vehicles"]) == 1
+    veh = data["vehicles"][0]
+    assert veh["entity_id"] == "VP_1"
+    assert veh["vehicle_id"] == "BUS_101"
+    assert veh["bearing"] == 45.0
+    assert veh["speed"] == 12.5
+
+    # Public metadata only: no sensitive fields
+    data_str = str(data)
+    assert "static_gtfs_url" not in data_str
+    assert "api_key" not in data_str
+
+
+@pytest.mark.asyncio
+async def test_get_route_map_missing_shapes(api_client: AsyncClient) -> None:
+    """Verify route without shapes returns empty shape list."""
+    response = await api_client.get("/api/v1/feeds/metro-city/routes/R_RED/map")
+    assert response.status_code == 200
+    data = response.json()["data"]
+
+    assert data["route_id"] == "R_RED"
+    # Never fabricated: shapes must be empty
+    assert data["shapes"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_route_map_feed_isolation(api_client: AsyncClient) -> None:
+    """Verify route map queries cannot access routes from other feeds."""
+    response = await api_client.get("/api/v1/feeds/empty-town/routes/B101/map")
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_route_map_not_found(api_client: AsyncClient) -> None:
+    """Verify 404 on nonexistent feed or route for map endpoint."""
+    resp1 = await api_client.get("/api/v1/feeds/unknown-feed/routes/B101/map")
+    assert resp1.status_code == 404
+
+    resp2 = await api_client.get("/api/v1/feeds/metro-city/routes/UNKNOWN/map")
+    assert resp2.status_code == 404
 
 
 # ---------------------------------------------------------------------------

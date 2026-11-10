@@ -2,6 +2,8 @@ import type {
   FeedSummary,
   ItemEnvelope,
   PaginatedResponse,
+  RouteMapData,
+  RouteSummary,
   StopArrivalPrediction,
   StopSummary,
 } from "../types/transit";
@@ -39,6 +41,34 @@ export function fetchHealth(): Promise<HealthStatus> {
 
 export async function fetchFeeds(): Promise<FeedSummary[]> {
   const envelope = await fetchApi<ItemEnvelope<FeedSummary[]>>("/api/v1/feeds");
+  return envelope.data;
+}
+
+export async function fetchRoutes(
+  feedSlug: string,
+  query?: string,
+  page: number = 1,
+  pageSize: number = 50,
+): Promise<PaginatedResponse<RouteSummary>> {
+  const searchParams = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (query && query.trim()) {
+    searchParams.set("q", query.trim());
+  }
+  return fetchApi<PaginatedResponse<RouteSummary>>(
+    `/api/v1/feeds/${encodeURIComponent(feedSlug)}/routes?${searchParams.toString()}`,
+  );
+}
+
+export async function fetchRouteMap(
+  feedSlug: string,
+  routeId: string,
+): Promise<RouteMapData> {
+  const envelope = await fetchApi<ItemEnvelope<RouteMapData>>(
+    `/api/v1/feeds/${encodeURIComponent(feedSlug)}/routes/${encodeURIComponent(routeId)}/map`,
+  );
   return envelope.data;
 }
 

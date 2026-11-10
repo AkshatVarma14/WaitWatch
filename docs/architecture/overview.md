@@ -244,18 +244,20 @@ Vehicle Positions + Schedule Data + Historical Delays
 
 ## Current Status
 
-**Stages 0 through 3 are complete and verified; Stage 4, Slice 4.1 is implemented and verified**:
+**Stages 0 through 3 are complete and verified; Stage 4, Slices 4.1 & 4.2 are implemented and verified**:
 
 - Full monorepo repository structure and CI/CD pipelines
-- Complete GTFS Static database schema, migrations 0001–0004, and ingestion pipeline
-- Transit Query REST API for feeds, routes, stops, and nearby geospatial queries
+- Complete GTFS Static database schema, migrations 0001–0005 (`0005_shapes` for route geometry), and ingestion pipeline
+- Transit Query REST API for feeds, routes, stops, nearby geospatial queries, and route map visualization (`/api/v1/feeds/{feed_slug}/routes/{route_id}/map`)
 - GTFS-Realtime vehicle position ingestion, snapshot storage, and deduplicated historical observations
 - Deterministic Stop Arrival Prediction & ETA Engine (`GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`)
 - Frontend Feed-Aware Transit Explorer & Live Arrivals Board (`apps/web` with React, TypeScript, TanStack Query, Zustand, and Tailwind)
-- Strict feed isolation across all frontend selections and API queries
-- 46 frontend tests (Vitest) and 105 backend tests (Pytest) passing cleanly in local and CI runs
+- Interactive route and vehicle map visualization (`MapView` with Leaflet) rendering true GTFS shape polylines, ordered stop markers, and bearing-rotated live vehicles with configurable tile provider and strict missing-shape warnings (no fabricated geometry)
+- Accessible route selector combobox (`RouteSelector`) and stop/vehicle navigator panel (`MapDetailsPanel`)
+- Strict feed and route isolation across all frontend selections and API queries
+- 65 frontend tests (Vitest) and 114 backend tests (Pytest) passing cleanly in local and CI runs
 
 Subsequent planned work:
-- Interactive map component with route shapes, stop markers, and live vehicle positions (Stage 4, Slice 4.2)
 - GTFS-Realtime TripUpdates ingestion
 - WebSocket live vehicle and ETA streaming
+- Turn-by-turn route navigation / trip planning

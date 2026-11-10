@@ -7,9 +7,14 @@ import { useAppStore } from "../stores/appStore";
 import { FeedSelector } from "../components/feedSelector";
 import { StopSearch } from "../components/stopSearch";
 import { ArrivalsBoard } from "../components/arrivalsBoard";
+import { RouteSelector } from "../components/routeSelector";
+import { MapView } from "../components/mapView";
+import { MapDetailsPanel } from "../components/mapDetailsPanel";
 import type {
   FeedSummary,
   PaginatedResponse,
+  RouteMapData,
+  RouteSummary,
   StopArrivalPrediction,
   StopSummary,
 } from "../types/transit";
@@ -34,6 +39,123 @@ const mockFeeds: FeedSummary[] = [
     last_realtime_poll_at: null,
   },
 ];
+
+const mockRoutesMetro: RouteSummary[] = [
+  {
+    route_id: "route-blue",
+    agency_id: "agency-1",
+    short_name: "B1",
+    long_name: "Blue Crosstown",
+    description: "Main crosstown service",
+    route_type: 3,
+    route_url: null,
+    route_color: "0052CC",
+    text_color: "FFFFFF",
+    sort_order: 1,
+  },
+  {
+    route_id: "route-red",
+    agency_id: "agency-1",
+    short_name: "R9",
+    long_name: "Red Line Metro",
+    description: "Rapid transit spine",
+    route_type: 1,
+    route_url: null,
+    route_color: "D32F2F",
+    text_color: "FFFFFF",
+    sort_order: 2,
+  },
+];
+
+const mockRouteMapWithShapes: RouteMapData = {
+  feed_slug: "metro-city",
+  route_id: "route-blue",
+  route_short_name: "B1",
+  route_long_name: "Blue Crosstown",
+  route_color: "#0052CC",
+  text_color: "#FFFFFF",
+  shapes: [
+    {
+      shape_id: "shape_blue_01",
+      points: [
+        { latitude: 40.7128, longitude: -74.006, sequence: 1, distance_traveled: 0.0 },
+        { latitude: 40.7300, longitude: -73.995, sequence: 2, distance_traveled: 2100.5 },
+        { latitude: 40.7580, longitude: -73.985, sequence: 3, distance_traveled: 5200.0 },
+      ],
+    },
+  ],
+  stops: [
+    {
+      stop_id: "MC-101",
+      name: "Downtown Terminal",
+      code: "101",
+      latitude: 40.7128,
+      longitude: -74.006,
+      stop_sequence: 1,
+      direction_id: 0,
+      wheelchair_boarding: 1,
+    },
+    {
+      stop_id: "MC-102",
+      name: "Central Park West",
+      code: "102",
+      latitude: 40.785091,
+      longitude: -73.968285,
+      stop_sequence: 2,
+      direction_id: 0,
+      wheelchair_boarding: 0,
+    },
+  ],
+  vehicles: [
+    {
+      entity_id: "veh-4001",
+      vehicle_id: "4001",
+      vehicle_label: "Fleet 4001",
+      latitude: 40.7300,
+      longitude: -73.995,
+      bearing: 45.0,
+      speed: 12.5,
+      current_status: 1,
+      trip_id: "trip-blue-1",
+      observed_at: "2026-11-10T12:14:30Z",
+    },
+    {
+      entity_id: "veh-4002",
+      vehicle_id: "4002",
+      vehicle_label: null,
+      latitude: 40.7450,
+      longitude: -73.990,
+      bearing: 180.0,
+      speed: 8.0,
+      current_status: 2,
+      trip_id: "trip-blue-2",
+      observed_at: "2026-11-10T12:13:50Z",
+    },
+  ],
+};
+
+const mockRouteMapWithoutShapes: RouteMapData = {
+  feed_slug: "metro-city",
+  route_id: "route-red",
+  route_short_name: "R9",
+  route_long_name: "Red Line Metro",
+  route_color: "#D32F2F",
+  text_color: "#FFFFFF",
+  shapes: [], // Explicitly empty shapes
+  stops: [
+    {
+      stop_id: "MC-201",
+      name: "South Station",
+      code: "201",
+      latitude: 40.7600,
+      longitude: -73.9700,
+      stop_sequence: 1,
+      direction_id: 0,
+      wheelchair_boarding: 1,
+    },
+  ],
+  vehicles: [],
+};
 
 const mockStopsMetro: StopSummary[] = [
   {
@@ -387,6 +509,245 @@ describe("Transit Explorer Components", () => {
     });
   });
 
+  describe("RouteSelector", () => {
+    it("returns null when no feed is selected", () => {
+      const { container } = renderWithClient(<RouteSelector />);
+      expect(container.firstChild).toBeNull();
+    });
+
+    it("fetches and renders route options when feed is selected", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      vi.spyOn(api, "fetchRoutes").mockResolvedValue({
+        data: mockRoutesMetro,
+        pagination: {
+          total: 2,
+          page: 1,
+          page_size: 50,
+          total_pages: 1,
+          has_next: false,
+          has_prev: false,
+        },
+      });
+
+      renderWithClient(<RouteSelector />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("option", { name: /B1 — Blue Crosstown/i }),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole("option", { name: /R9 — Red Line Metro/i }),
+        ).toBeInTheDocument();
+      });
+    });
+
+    it("selecting a route updates selectedRouteId in appStore", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      vi.spyOn(api, "fetchRoutes").mockResolvedValue({
+        data: mockRoutesMetro,
+        pagination: {
+          total: 2,
+          page: 1,
+          page_size: 50,
+          total_pages: 1,
+          has_next: false,
+          has_prev: false,
+        },
+      });
+
+      renderWithClient(<RouteSelector />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("option", { name: /B1 — Blue Crosstown/i }),
+        ).toBeInTheDocument();
+      });
+
+      const select = screen.getByRole("combobox", {
+        name: /Select transit route/i,
+      });
+      fireEvent.change(select, { target: { value: "route-blue" } });
+
+      expect(useAppStore.getState().selectedRouteId).toBe("route-blue");
+    });
+
+    it("displays error alert and retry button when route fetch fails", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      const fetchSpy = vi
+        .spyOn(api, "fetchRoutes")
+        .mockRejectedValueOnce(new Error("Route service timeout"))
+        .mockResolvedValueOnce({
+          data: mockRoutesMetro,
+          pagination: {
+            total: 2,
+            page: 1,
+            page_size: 50,
+            total_pages: 1,
+            has_next: false,
+            has_prev: false,
+          },
+        });
+
+      renderWithClient(<RouteSelector />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Route service timeout",
+        );
+      });
+
+      const retryBtn = screen.getByRole("button", { name: /Retry/i });
+      fireEvent.click(retryBtn);
+
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+      });
+    });
+  });
+
+  describe("MapView", () => {
+    it("displays select route prompt when no route is selected", () => {
+      renderWithClient(<MapView />);
+      expect(screen.getByText("Select a Transit Route")).toBeInTheDocument();
+      expect(
+        screen.getByText(/Choose a route above to visualize its true GTFS shape polyline/i),
+      ).toBeInTheDocument();
+      // Tile attribution is present
+      expect(screen.getAllByText(/OpenStreetMap/i).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("renders active shape badge and vehicle count when shapes and vehicles are present", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedRouteId("route-blue");
+      vi.spyOn(api, "fetchRouteMap").mockResolvedValue(mockRouteMapWithShapes);
+
+      renderWithClient(<MapView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/• Route B1/i)).toBeInTheDocument();
+      });
+
+      expect(screen.getByText(/GTFS Shape Active \(1 track\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/2 Live Vehicles/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/OpenStreetMap/i).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("displays warning badge when route shape is unavailable without fabricating lines", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedRouteId("route-red");
+      vi.spyOn(api, "fetchRouteMap").mockResolvedValue(mockRouteMapWithoutShapes);
+
+      renderWithClient(<MapView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/• Route R9/i)).toBeInTheDocument();
+      });
+
+      // Crucial requirement: clear "route shape unavailable" warning state
+      expect(
+        screen.getByText(/⚠️ Route shape unavailable — showing stops only/i),
+      ).toBeInTheDocument();
+      // No live vehicle badge when vehicles array is empty
+      expect(screen.queryByText(/Live Vehicles/i)).not.toBeInTheDocument();
+    });
+
+    it("displays error banner and retry button when route map fetch fails", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedRouteId("route-blue");
+      const fetchSpy = vi
+        .spyOn(api, "fetchRouteMap")
+        .mockRejectedValueOnce(new Error("Geometry data corrupted"))
+        .mockResolvedValueOnce(mockRouteMapWithShapes);
+
+      renderWithClient(<MapView />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Geometry data corrupted",
+        );
+      });
+
+      const retryBtn = screen.getByRole("button", { name: /Retry/i });
+      fireEvent.click(retryBtn);
+
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+      });
+    });
+  });
+
+  describe("MapDetailsPanel", () => {
+    it("returns null when no route or route data is loaded", () => {
+      const { container } = renderWithClient(<MapDetailsPanel />);
+      expect(container.firstChild).toBeNull();
+    });
+
+    it("renders stops tab with count and allows stop selection", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedRouteId("route-blue");
+      vi.spyOn(api, "fetchRouteMap").mockResolvedValue(mockRouteMapWithShapes);
+
+      renderWithClient(<MapDetailsPanel />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /Stops \(2\)/i }),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: /Live Vehicles \(2\)/i }),
+        ).toBeInTheDocument();
+      });
+
+      expect(screen.getByText("Downtown Terminal")).toBeInTheDocument();
+      expect(screen.getByText("Central Park West")).toBeInTheDocument();
+
+      // Click Downtown Terminal stop
+      const stopBtn = screen.getByText("Downtown Terminal").closest("button");
+      expect(stopBtn).not.toBeNull();
+      fireEvent.click(stopBtn!);
+
+      expect(useAppStore.getState().selectedStop?.stop_id).toBe("MC-101");
+      expect(screen.getByText("Active ✓")).toBeInTheDocument();
+    });
+
+    it("switches to vehicles tab and selects vehicle to inspect telemetry", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedRouteId("route-blue");
+      vi.spyOn(api, "fetchRouteMap").mockResolvedValue(mockRouteMapWithShapes);
+
+      renderWithClient(<MapDetailsPanel />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /Live Vehicles \(2\)/i }),
+        ).toBeInTheDocument();
+      });
+
+      // Click Live Vehicles tab
+      fireEvent.click(screen.getByRole("button", { name: /Live Vehicles \(2\)/i }));
+
+      // Vehicle cards
+      expect(screen.getByText("Vehicle #Fleet 4001")).toBeInTheDocument();
+      expect(screen.getByText("Vehicle #4002")).toBeInTheDocument();
+
+      // Click first vehicle to inspect telemetry
+      fireEvent.click(screen.getByText("Vehicle #Fleet 4001").closest("button")!);
+
+      expect(useAppStore.getState().selectedVehicleId).toBe("veh-4001");
+
+      // Detailed telemetry card rendered
+      expect(screen.getAllByText(/45 km\/h/i).length).toBeGreaterThanOrEqual(1); // 12.5 * 3.6 = 45 km/h
+      expect(screen.getByText(/45°/i)).toBeInTheDocument();
+      expect(screen.getByText(/Stopped at station/i)).toBeInTheDocument();
+      expect(screen.getByText(/40.7300, -73.9950/i)).toBeInTheDocument();
+
+      // Clear selection button works
+      const clearBtn = screen.getByRole("button", { name: /Clear selection/i });
+      fireEvent.click(clearBtn);
+      expect(useAppStore.getState().selectedVehicleId).toBeNull();
+    });
+  });
+
   describe("Feed Isolation Integration", () => {
     it("switching feeds clears previously selected stop and isolates arrivals", async () => {
       vi.spyOn(api, "fetchFeeds").mockResolvedValue(mockFeeds);
@@ -448,6 +809,82 @@ describe("Transit Explorer Components", () => {
       });
       // Downtown Terminal arrivals should no longer be displayed
       expect(screen.queryByText("Uptown Express")).not.toBeInTheDocument();
+    });
+
+    it("switching feeds clears selected route, stop, vehicle, and resets map navigator", async () => {
+      vi.spyOn(api, "fetchFeeds").mockResolvedValue(mockFeeds);
+      vi.spyOn(api, "fetchRoutes").mockResolvedValue({
+        data: mockRoutesMetro,
+        pagination: {
+          total: 2,
+          page: 1,
+          page_size: 50,
+          total_pages: 1,
+          has_next: false,
+          has_prev: false,
+        },
+      });
+      vi.spyOn(api, "fetchRouteMap").mockResolvedValue(mockRouteMapWithShapes);
+
+      renderWithClient(
+        <div>
+          <FeedSelector />
+          <RouteSelector />
+          <MapView />
+          <MapDetailsPanel />
+        </div>,
+      );
+
+      // 1. Select Metro City feed
+      await waitFor(() => {
+        expect(
+          screen.getByRole("option", { name: /Metro City/i }),
+        ).toBeInTheDocument();
+      });
+      const feedSelect = screen.getByRole("combobox", {
+        name: /Select transit feed/i,
+      });
+      fireEvent.change(feedSelect, { target: { value: "metro-city" } });
+
+      // 2. Select Route B1
+      await waitFor(() => {
+        expect(
+          screen.getByRole("option", { name: /B1 — Blue Crosstown/i }),
+        ).toBeInTheDocument();
+      });
+      const routeSelect = screen.getByRole("combobox", {
+        name: /Select transit route/i,
+      });
+      fireEvent.change(routeSelect, { target: { value: "route-blue" } });
+
+      // 3. Map loads Route B1 with active shapes and vehicles
+      await waitFor(() => {
+        expect(screen.getByText(/• Route B1/i)).toBeInTheDocument();
+        expect(screen.getByText(/GTFS Shape Active \(1 track\)/i)).toBeInTheDocument();
+      });
+
+      // 4. In details panel, select vehicle Fleet 4001
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Live Vehicles \(2\)/i })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Live Vehicles \(2\)/i }));
+      fireEvent.click(screen.getByText("Vehicle #Fleet 4001").closest("button")!);
+      expect(useAppStore.getState().selectedVehicleId).toBe("veh-4001");
+
+      // 5. Now switch feed to Valley Transit
+      fireEvent.change(feedSelect, { target: { value: "valley-transit" } });
+
+      // 6. Verify full isolation: feed changed, route reset, vehicle reset, stop reset
+      expect(useAppStore.getState().selectedFeedSlug).toBe("valley-transit");
+      expect(useAppStore.getState().selectedRouteId).toBeNull();
+      expect(useAppStore.getState().selectedVehicleId).toBeNull();
+      expect(useAppStore.getState().selectedStop).toBeNull();
+
+      // Map returns to "Select a Transit Route" prompt
+      await waitFor(() => {
+        expect(screen.getByText("Select a Transit Route")).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/• Route B1/i)).not.toBeInTheDocument();
     });
   });
 });

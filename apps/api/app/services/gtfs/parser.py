@@ -3,7 +3,7 @@
 import csv
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from app.services.gtfs.exceptions import GTFSValidationError
@@ -117,6 +117,17 @@ class ParsedStopTime:
 
 
 @dataclass(slots=True)
+class ParsedShapePoint:
+    """Parsed shape point record."""
+
+    shape_id: str
+    shape_pt_lat: float
+    shape_pt_lon: float
+    shape_pt_sequence: int
+    shape_dist_traveled: float | None = None
+
+
+@dataclass(slots=True)
 class ParsedFeedData:
     """All validated GTFS entities parsed from a feed."""
 
@@ -127,6 +138,7 @@ class ParsedFeedData:
     calendar_dates: list[ParsedCalendarDate]
     trips: list[ParsedTrip]
     stop_times: list[ParsedStopTime]
+    shapes: list[ParsedShapePoint] = field(default_factory=list)
 
 
 def _read_csv_rows(content: str, filename: str) -> list[dict[str, str]]:
@@ -644,6 +656,76 @@ def parse_gtfs_tables(tables: dict[str, str]) -> ParsedFeedData:
             )
         )
 
+    # 8. Parse shapes.txt (optional)
+    shapes: list[ParsedShapePoint] = []
+    if "shapes.txt" in tables and tables["shapes.txt"].strip():
+        shape_rows = _read_csv_rows(tables["shapes.txt"], "shapes.txt")
+        shapes_seen: set[tuple[str, int]] = set()
+        for row_idx, row in enumerate(shape_rows, start=2):
+            shape_id = row.get("shape_id", "").strip()
+            lat_raw = row.get("shape_pt_lat", "").strip()
+            lon_raw = row.get("shape_pt_lon", "").strip()
+            seq_raw = row.get("shape_pt_sequence", "").strip()
+
+            if not shape_id or not lat_raw or not lon_raw or not seq_raw:
+                raise GTFSValidationError(
+                    f"shapes.txt row {row_idx}: shape_id, shape_pt_lat, "
+                    "shape_pt_lon, and shape_pt_sequence are required"
+                )
+
+            try:
+                lat = float(lat_raw)
+                lon = float(lon_raw)
+            except ValueError as exc:
+                raise GTFSValidationError(
+                    f"shapes.txt row {row_idx}: Coordinates must be numeric, "
+                    f"got lat={lat_raw!r}, lon={lon_raw!r}"
+                ) from exc
+
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                raise GTFSValidationError(
+                    f"shapes.txt row {row_idx}: Coordinates out of range "
+                    f"(lat={lat}, lon={lon})"
+                )
+
+            try:
+                sequence = int(seq_raw)
+            except ValueError as exc:
+                raise GTFSValidationError(
+                    f"shapes.txt row {row_idx}: shape_pt_sequence must be integer, "
+                    f"got {seq_raw!r}"
+                ) from exc
+
+            if sequence < 0:
+                raise GTFSValidationError(
+                    f"shapes.txt row {row_idx}: shape_pt_sequence must be non-negative"
+                )
+
+            key = (shape_id, sequence)
+            if key in shapes_seen:
+                raise GTFSValidationError(
+                    f"shapes.txt row {row_idx}: Duplicate shape sequence {key}"
+                )
+            shapes_seen.add(key)
+
+            dist_raw = row.get("shape_dist_traveled", "").strip()
+            dist: float | None = None
+            if dist_raw:
+                try:
+                    dist = float(dist_raw)
+                except ValueError:
+                    dist = None
+
+            shapes.append(
+                ParsedShapePoint(
+                    shape_id=shape_id,
+                    shape_pt_lat=lat,
+                    shape_pt_lon=lon,
+                    shape_pt_sequence=sequence,
+                    shape_dist_traveled=dist,
+                )
+            )
+
     return ParsedFeedData(
         agencies=agencies,
         routes=routes,
@@ -652,4 +734,5 @@ def parse_gtfs_tables(tables: dict[str, str]) -> ParsedFeedData:
         calendar_dates=calendar_dates,
         trips=trips,
         stop_times=stop_times,
+        shapes=shapes,
     )

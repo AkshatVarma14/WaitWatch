@@ -16,10 +16,10 @@ def test_alembic_config_resolves() -> None:
     alembic_cfg.set_main_option("script_location", str(api_dir / "alembic"))
     script = ScriptDirectory.from_config(alembic_cfg)
 
-    # Verify head migration is 0004_vehicle_observations
+    # Verify head migration is 0005_shapes
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "0004_vehicle_observations"
+    assert heads[0] == "0005_shapes"
 
     # Verify initial migration
     rev_0001 = script.get_revision("0001_initial_transit_models")
@@ -43,6 +43,12 @@ def test_alembic_config_resolves() -> None:
     assert rev_0004 is not None
     assert rev_0004.down_revision == "0003_vehicle_positions"
     assert "vehicle_observations" in (rev_0004.doc or "").lower()
+
+    # Verify forward migration 0005
+    rev_0005 = script.get_revision("0005_shapes")
+    assert rev_0005 is not None
+    assert rev_0005.down_revision == "0004_vehicle_observations"
+    assert "shapes" in (rev_0005.doc or "").lower()
 
 
 def test_migration_environment_settings_integration() -> None:

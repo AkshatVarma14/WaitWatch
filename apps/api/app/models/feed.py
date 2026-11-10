@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.models.agency import Agency
     from app.models.calendar import Calendar, CalendarDate
     from app.models.route import Route
+    from app.models.shape import Shape
     from app.models.stop import Stop
     from app.models.trip import Trip
     from app.models.vehicle_observation import VehicleObservation
@@ -84,6 +85,9 @@ class TransitFeed(Base):
         back_populates="feed", cascade="all, delete-orphan"
     )
     calendar_dates: Mapped[list["CalendarDate"]] = relationship(
+        back_populates="feed", cascade="all, delete-orphan"
+    )
+    shapes: Mapped[list["Shape"]] = relationship(
         back_populates="feed", cascade="all, delete-orphan"
     )
     vehicle_positions: Mapped[list["VehiclePosition"]] = relationship(

@@ -158,7 +158,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 | Stage 1 | GTFS static data ingestion | ✅ Complete (Slices 1.1, 1.2 & 1.3) |
 | Stage 2 | GTFS-Realtime integration | ✅ Complete (Slice 2.1 Complete) |
 | Stage 3 | Historical Observation & ETA Prediction | ✅ Complete (Slices 3.1 & 3.2 Complete) |
-| Stage 4 | UI polish and deployment | 🟡 In Progress (Slice 4.1 Complete) |
+| Stage 4 | UI polish and deployment | 🟡 In Progress (Slices 4.1 & 4.2 Complete) |
 
 ### Completed Milestones
 - **Stage 0**: Full foundation with React/TS/Tailwind frontend, FastAPI backend, CI workflows, and documentation.
@@ -174,6 +174,14 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - Accessible, responsive UI components: `FeedSelector` with operational and live tracking badges, `StopSearch` with text filtering and wheelchair accessibility indicators, and `ArrivalsBoard` with scheduled/estimated arrival times, formatted delay badges (`+X min late`, `On time`, `X min early`), prediction source labels (`Live + History` vs `Schedule`), telemetry observation age, and agency timezone disclosure.
   - Strict feed isolation: switching transit feeds immediately resets the active stop and arrivals view to prevent cross-feed data leakage.
   - Comprehensive unit and integration test suite: 46 Vitest frontend tests across 5 files, and 105 backend Pytest tests.
+- **Stage 4, Slice 4.2**: Interactive Map & Route Visualization:
+  - Feed-scoped GTFS `shapes.txt` ingestion into new `shapes` PostGIS model with spatial GiST indexing and forward migration `0005_shapes`.
+  - Read-only bounded route map endpoint (`GET /api/v1/feeds/{feed_slug}/routes/{route_id}/map`) returning true shape point sequences, ordered stops served, and fresh route-scoped vehicle positions with bearing and freshness window (<= 300s). Strict avoidance of fabricated geometry: routes without shapes return an empty shape list and a prominent warning.
+  - Leaflet-based responsive map component (`MapView`) rendering true shape polylines in route colors, stop circle markers, and bearing-oriented live vehicle markers.
+  - Configurable tile provider URL via `VITE_MAP_TILE_URL` (defaulting to OpenStreetMap standard tiles) with persistent attribution and documented usage policy.
+  - Keyboard-accessible route selector (`RouteSelector`) and dual-tab stop/vehicle inspector panel (`MapDetailsPanel`).
+  - Feed and route isolation: switching feeds clears active routes, stops, vehicles, and map layers.
+  - Comprehensive test suite: 65 Vitest frontend tests and 114 Pytest backend tests.
 
 ## License
 

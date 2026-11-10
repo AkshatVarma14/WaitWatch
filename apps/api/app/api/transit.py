@@ -2,7 +2,8 @@
 
 import logging
 import math
-from datetime import datetime
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -14,7 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.database.session import get_session
-from app.models import Agency, Route, Stop, TransitFeed
+from app.models import (
+    Agency,
+    Route,
+    Shape,
+    Stop,
+    StopTime,
+    TransitFeed,
+    Trip,
+    VehiclePosition,
+)
 from app.schemas.transit import (
     FeedDetailResponse,
     FeedSummaryResponse,
@@ -23,7 +33,12 @@ from app.schemas.transit import (
     PaginatedResponse,
     PaginationMeta,
     RouteDetailResponse,
+    RouteMapResponse,
+    RouteMapStopResponse,
+    RouteMapVehicleResponse,
     RouteResponse,
+    RouteShapeResponse,
+    ShapePointResponse,
     StopArrivalPrediction,
     StopDetailResponse,
     StopResponse,
@@ -320,6 +335,205 @@ async def get_route(
         raise
     except (OperationalError, DBAPIError, TimeoutError, OSError) as exc:
         logger.warning("Database unavailable in get_route: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service is temporarily unavailable",
+        ) from exc
+
+
+@router.get(
+    "/feeds/{feed_slug}/routes/{route_id}/map",
+    response_model=ItemEnvelope[RouteMapResponse],
+    summary="Get route geometry, ordered stops, and vehicles for map view",
+)
+async def get_route_map(
+    feed_slug: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=64,
+            pattern=r"^[a-zA-Z0-9_-]+$",
+            description="Feed slug or numeric ID identifier",
+        ),
+    ],
+    route_id: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=255,
+            description="GTFS route identifier",
+        ),
+    ],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    reference_time: Annotated[
+        datetime | None,
+        Query(
+            description=(
+                "Reference time for telemetry freshness check (defaults to UTC now)"
+            ),
+        ),
+    ] = None,
+) -> ItemEnvelope[RouteMapResponse]:
+    """Retrieve GTFS shape points, ordered stops, and active vehicles for a route."""
+    try:
+        feed = await _get_feed_by_slug(session, feed_slug)
+
+        # 1. Fetch route
+        route_stmt = select(Route).where(
+            Route.feed_id == feed.id, Route.route_id == route_id
+        )
+        route = (await session.execute(route_stmt)).scalar_one_or_none()
+        if not route:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Route '{route_id}' not found in feed '{feed_slug}'",
+            )
+
+        # 2. Query distinct shape_ids from trips belonging to this route
+        shape_ids_stmt = (
+            select(Trip.shape_id)
+            .where(
+                Trip.feed_id == feed.id,
+                Trip.route_id == route.id,
+                Trip.shape_id.isnot(None),
+            )
+            .distinct()
+            .order_by(Trip.shape_id.asc())
+        )
+        shape_ids = [
+            s for s in (await session.execute(shape_ids_stmt)).scalars().all() if s
+        ]
+
+        route_shapes: list[RouteShapeResponse] = []
+        if shape_ids:
+            # Bound to at most 10 distinct shapes per route
+            shape_ids = shape_ids[:10]
+            shapes_stmt = (
+                select(Shape)
+                .where(Shape.feed_id == feed.id, Shape.shape_id.in_(shape_ids))
+                .order_by(Shape.shape_id.asc(), Shape.shape_pt_sequence.asc())
+            )
+            shape_points = (await session.execute(shapes_stmt)).scalars().all()
+
+            points_by_shape: dict[str, list[ShapePointResponse]] = defaultdict(list)
+            for p in shape_points:
+                points_by_shape[p.shape_id].append(
+                    ShapePointResponse(
+                        latitude=p.shape_pt_lat,
+                        longitude=p.shape_pt_lon,
+                        sequence=p.shape_pt_sequence,
+                        distance_traveled=p.shape_dist_traveled,
+                    )
+                )
+
+            for sid in shape_ids:
+                pts = points_by_shape.get(sid, [])
+                if pts:
+                    route_shapes.append(RouteShapeResponse(shape_id=sid, points=pts))
+
+        # 3. Retrieve ordered stops along the route
+        stops_stmt = (
+            select(
+                Stop.stop_id,
+                Stop.name,
+                Stop.code,
+                Stop.latitude,
+                Stop.longitude,
+                Stop.wheelchair_boarding,
+                func.min(StopTime.stop_sequence).label("min_seq"),
+                Trip.direction_id,
+            )
+            .join(StopTime, StopTime.stop_id == Stop.id)
+            .join(Trip, Trip.id == StopTime.trip_id)
+            .where(Trip.feed_id == feed.id, Trip.route_id == route.id)
+            .group_by(
+                Stop.stop_id,
+                Stop.name,
+                Stop.code,
+                Stop.latitude,
+                Stop.longitude,
+                Stop.wheelchair_boarding,
+                Trip.direction_id,
+            )
+            .order_by(
+                Trip.direction_id.asc().nullslast(),
+                func.min(StopTime.stop_sequence).asc(),
+                Stop.name.asc(),
+            )
+            .limit(200)
+        )
+        stop_rows = (await session.execute(stops_stmt)).all()
+
+        route_stops = [
+            RouteMapStopResponse(
+                stop_id=r[0],
+                name=r[1],
+                code=r[2],
+                latitude=r[3],
+                longitude=r[4],
+                wheelchair_boarding=r[5],
+                stop_sequence=r[6],
+                direction_id=r[7],
+            )
+            for r in stop_rows
+        ]
+
+        # 4. Retrieve fresh vehicles currently assigned to this route
+        now = reference_time or datetime.now(UTC)
+        fresh_since = now - timedelta(seconds=300)
+        max_future = now + timedelta(seconds=60)
+        veh_time = func.coalesce(
+            VehiclePosition.vehicle_timestamp,
+            VehiclePosition.feed_timestamp,
+            VehiclePosition.recorded_at,
+        )
+
+        veh_stmt = (
+            select(VehiclePosition)
+            .where(
+                VehiclePosition.feed_id == feed.id,
+                VehiclePosition.route_id == route_id,
+                veh_time >= fresh_since,
+                veh_time <= max_future,
+            )
+            .order_by(veh_time.desc(), VehiclePosition.entity_id.asc())
+            .limit(50)
+        )
+        vehicles = (await session.execute(veh_stmt)).scalars().all()
+
+        route_vehicles = [
+            RouteMapVehicleResponse(
+                entity_id=v.entity_id,
+                vehicle_id=v.vehicle_id,
+                vehicle_label=v.vehicle_label,
+                latitude=v.latitude,
+                longitude=v.longitude,
+                bearing=v.bearing,
+                speed=v.speed,
+                current_status=v.current_status,
+                trip_id=v.trip_id,
+                observed_at=v.vehicle_timestamp or v.feed_timestamp or v.recorded_at,
+            )
+            for v in vehicles
+        ]
+
+        return ItemEnvelope(
+            data=RouteMapResponse(
+                feed_slug=feed.slug,
+                route_id=route.route_id,
+                route_short_name=route.short_name,
+                route_long_name=route.long_name,
+                route_color=route.route_color,
+                text_color=route.text_color,
+                shapes=route_shapes,
+                stops=route_stops,
+                vehicles=route_vehicles,
+            )
+        )
+    except HTTPException:
+        raise
+    except (OperationalError, DBAPIError, TimeoutError, OSError) as exc:
+        logger.warning("Database unavailable in get_route_map: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service is temporarily unavailable",

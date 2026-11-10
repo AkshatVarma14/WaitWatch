@@ -5,6 +5,7 @@ from app.models.agency import Agency
 from app.models.calendar import Calendar, CalendarDate
 from app.models.feed import TransitFeed
 from app.models.route import Route
+from app.models.shape import Shape
 from app.models.stop import Stop
 from app.models.stop_time import StopTime
 from app.models.trip import Trip
@@ -17,6 +18,7 @@ __all__ = [
     "Calendar",
     "CalendarDate",
     "Route",
+    "Shape",
     "Stop",
     "StopTime",
     "TransitFeed",

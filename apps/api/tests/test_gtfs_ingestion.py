@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.database.session import Base
 from app.models import (
     Route,
+    Shape,
     Stop,
     TransitFeed,
 )
@@ -42,6 +43,7 @@ def _create_synthetic_gtfs_zip(
     stop_times_csv: str | None = None,
     calendar_csv: str | None = None,
     calendar_dates_csv: str | None = None,
+    shapes_csv: str | None = None,
 ) -> bytes:
     """Helper to build an in-memory valid or custom synthetic GTFS ZIP archive."""
     buf = io.BytesIO()
@@ -96,6 +98,8 @@ def _create_synthetic_gtfs_zip(
             z.writestr("trips.txt", trips_csv)
         if stop_times_csv is not None:
             z.writestr("stop_times.txt", stop_times_csv)
+        if shapes_csv is not None:
+            z.writestr("shapes.txt", shapes_csv)
 
     return buf.getvalue()
 
@@ -408,6 +412,59 @@ def test_parser_rejects_broken_foreign_keys() -> None:
         parse_gtfs_tables(tables)
 
 
+def test_parser_valid_shapes() -> None:
+    """Verify parser parses shapes.txt with valid sequence, lat, lon, and distance."""
+    shapes_csv = (
+        "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled\n"
+        "SHAPE1,40.7128,-74.0060,1,0.0\n"
+        "SHAPE1,40.7200,-74.0010,2,850.5\n"
+        "SHAPE2,40.7500,-73.9900,1,\n"
+    )
+    zip_bytes = _create_synthetic_gtfs_zip(shapes_csv=shapes_csv)
+    tables = extract_gtfs_tables(zip_bytes)
+    parsed = parse_gtfs_tables(tables)
+
+    assert len(parsed.shapes) == 3
+    s1 = parsed.shapes[0]
+    assert s1.shape_id == "SHAPE1"
+    assert s1.shape_pt_lat == 40.7128
+    assert s1.shape_pt_lon == -74.0060
+    assert s1.shape_pt_sequence == 1
+    assert s1.shape_dist_traveled == 0.0
+
+    s2 = parsed.shapes[1]
+    assert s2.shape_dist_traveled == 850.5
+
+    s3 = parsed.shapes[2]
+    assert s3.shape_id == "SHAPE2"
+    assert s3.shape_dist_traveled is None
+
+
+def test_parser_rejects_invalid_shape_coordinates() -> None:
+    """Verify parser rejects out-of-range shape coordinates."""
+    shapes_csv = (
+        "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n"
+        "SHAPE1,95.0000,-74.0060,1\n"
+    )
+    zip_bytes = _create_synthetic_gtfs_zip(shapes_csv=shapes_csv)
+    tables = extract_gtfs_tables(zip_bytes)
+    with pytest.raises(GTFSValidationError, match="Coordinates out of range"):
+        parse_gtfs_tables(tables)
+
+
+def test_parser_rejects_duplicate_shape_sequence() -> None:
+    """Verify parser rejects duplicate sequence numbers within the same shape_id."""
+    shapes_csv = (
+        "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n"
+        "SHAPE1,40.7128,-74.0060,1\n"
+        "SHAPE1,40.7200,-74.0010,1\n"
+    )
+    zip_bytes = _create_synthetic_gtfs_zip(shapes_csv=shapes_csv)
+    tables = extract_gtfs_tables(zip_bytes)
+    with pytest.raises(GTFSValidationError, match="Duplicate shape sequence"):
+        parse_gtfs_tables(tables)
+
+
 # ---------------------------------------------------------------------------
 # 4. Database Persistence & Transactional Idempotency Tests
 # ---------------------------------------------------------------------------
@@ -520,6 +577,72 @@ async def test_persist_feed_data_and_idempotent_replace(
     db_routes = (await session.execute(routes_stmt)).scalars().all()
     assert len(db_routes) == 2
     assert {r.route_id for r in db_routes} == {"R1", "R2"}
+
+
+@pytest.mark.asyncio
+async def test_persist_shapes_and_idempotent_replace(
+    async_test_session: AsyncSession,
+) -> None:
+    """Ensure shapes are persisted and replaced idempotently on new import."""
+    session = async_test_session
+
+    feed = TransitFeed(
+        city_name="Shape City",
+        slug="shape-city",
+        static_gtfs_url="https://transit.example.com/gtfs.zip",
+    )
+    session.add(feed)
+    await session.commit()
+    feed_id = feed.id
+
+    # 1. Ingest feed with 2 shape points
+    shapes_v1 = (
+        "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled\n"
+        "SHAPE_RED,40.7128,-74.0060,1,0.0\n"
+        "SHAPE_RED,40.7200,-74.0010,2,800.0\n"
+    )
+    zip_bytes_v1 = _create_synthetic_gtfs_zip(shapes_csv=shapes_v1)
+    tables_v1 = extract_gtfs_tables(zip_bytes_v1)
+    parsed_v1 = parse_gtfs_tables(tables_v1)
+
+    stats_v1 = await persist_feed_data(session, feed_id, parsed_v1)
+    await session.commit()
+
+    assert stats_v1.shapes_count == 2
+
+    # Verify shapes stored in database
+    shapes_stmt = (
+        select(Shape)
+        .where(Shape.feed_id == feed_id)
+        .order_by(Shape.shape_pt_sequence.asc())
+    )
+    db_shapes = (await session.execute(shapes_stmt)).scalars().all()
+    assert len(db_shapes) == 2
+    assert db_shapes[0].shape_id == "SHAPE_RED"
+    assert db_shapes[0].shape_pt_lat == 40.7128
+    assert db_shapes[1].shape_pt_sequence == 2
+
+    # 2. Re-ingest with updated shapes (3 points for SHAPE_BLUE)
+    shapes_v2 = (
+        "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n"
+        "SHAPE_BLUE,37.7749,-122.4194,1\n"
+        "SHAPE_BLUE,37.7800,-122.4100,2\n"
+        "SHAPE_BLUE,37.7850,-122.4050,3\n"
+    )
+    zip_bytes_v2 = _create_synthetic_gtfs_zip(shapes_csv=shapes_v2)
+    tables_v2 = extract_gtfs_tables(zip_bytes_v2)
+    parsed_v2 = parse_gtfs_tables(tables_v2)
+
+    stats_v2 = await persist_feed_data(session, feed_id, parsed_v2)
+    await session.commit()
+
+    assert stats_v2.shapes_count == 3
+
+    # Old shapes should be removed and only new ones present
+    db_shapes_v2 = (await session.execute(shapes_stmt)).scalars().all()
+    assert len(db_shapes_v2) == 3
+    assert all(s.shape_id == "SHAPE_BLUE" for s in db_shapes_v2)
+    assert not any(s.shape_id == "SHAPE_RED" for s in db_shapes_v2)
 
 
 @pytest.mark.asyncio
