@@ -158,7 +158,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 | Stage 1 | GTFS static data ingestion | ✅ Complete (Slices 1.1, 1.2 & 1.3) |
 | Stage 2 | GTFS-Realtime integration | ✅ Complete (Slice 2.1 Complete) |
 | Stage 3 | Historical Observation & ETA Prediction | ✅ Complete (Slices 3.1 & 3.2 Complete) |
-| Stage 4 | UI polish and deployment | 🟡 In Progress (Slices 4.1, 4.2 & 4.3 Complete) |
+| Stage 4 | UI polish and deployment | 🟡 In Progress (Slices 4.1, 4.2, 4.3 & 4.4 Complete) |
 
 ### Completed Milestones
 - **Stage 0**: Full foundation with React/TS/Tailwind frontend, FastAPI backend, CI workflows, and documentation.
@@ -189,6 +189,13 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - Transient failure resilience: preserves the last successful predictions and vehicle positions on transient refresh errors, accompanied by a non-blocking warning banner, last updated timestamp (`formatLastUpdated`), "⚠️ Stale" status pill, and manual retry controls.
   - JSON API polling only: Leaflet map tiles are untouched during background polling, vector layers update in-place, and map bounds auto-fit only on initial route selection to maintain stable viewports.
   - Comprehensive test suite: 81 Vitest frontend tests across 6 files, and 114 Pytest backend tests.
+- **Stage 4, Slice 4.4**: GTFS-Realtime TripUpdates Ingestion:
+  - GTFS-RT TripUpdate model (`TripUpdate`) and forward migration `0006_trip_updates` storing feed-scoped stop-time predictions and trip cancellations.
+  - Protocol buffer parser (`parse_trip_updates`) with `DIFFERENTIAL` incrementality rejection, duplicate entity ID validation, timestamp bounds enforcement, and defensive handling of partial descriptors.
+  - Ingestion service (`TripUpdateIngestionService`) with atomic snapshot replacement, feed isolation, and graceful skip when `realtime_trip_updates_url` is omitted.
+  - Prediction service integration (`ArrivalPredictionService`): priority evaluation for `TRIP_UPDATE` prediction source, absolute event time precedence over delay (`time` > `delay`), departure fallback, trip cancellation (`CANCELED`) suppression, and skipped stop (`SKIPPED`) suppression, gracefully coexisting with vehicle positions and schedule fallbacks.
+  - Frontend integration: `TRIP_UPDATE` prediction source formatting with prominent "Live TripUpdate" badge styling in `ArrivalsBoard`.
+  - Comprehensive test suite: 82 Vitest frontend tests across 6 files, and 132 Pytest backend tests across 10 files.
 
 ## License
 

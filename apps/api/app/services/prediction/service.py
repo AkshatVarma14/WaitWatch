@@ -44,6 +44,7 @@ from app.models.feed import TransitFeed
 from app.models.stop import Stop
 from app.models.stop_time import StopTime
 from app.models.trip import Trip
+from app.models.trip_update import TripUpdate
 from app.models.vehicle_observation import VehicleObservation
 from app.models.vehicle_position import VehiclePosition
 from app.schemas.transit import StopArrivalPrediction
@@ -197,7 +198,7 @@ class ArrivalPredictionService:
                 session, feed.id, d
             )
 
-        # 4. Fetch live vehicle positions for this feed
+        # 4. Fetch live vehicle positions and trip updates for this feed
         vp_stmt = select(VehiclePosition).where(
             VehiclePosition.feed_id == feed.id,
             VehiclePosition.trip_id.isnot(None),
@@ -205,8 +206,12 @@ class ArrivalPredictionService:
         )
         all_vps = (await session.execute(vp_stmt)).scalars().all()
 
-        # 5. Filter fresh vehicle snapshots
+        tu_stmt = select(TripUpdate).where(TripUpdate.feed_id == feed.id)
+        all_tus = (await session.execute(tu_stmt)).scalars().all()
+
+        # 5. Filter fresh vehicle snapshots and trip updates
         fresh_vps: list[tuple[VehiclePosition, datetime]] = []
+        vps_by_trip: dict[str, tuple[VehiclePosition, datetime]] = {}
         for vp in all_vps:
             raw_ts = vp.vehicle_timestamp or vp.feed_timestamp or vp.recorded_at
             if raw_ts is None:
@@ -219,12 +224,40 @@ class ArrivalPredictionService:
                 # Stale telemetry or clock skewed into future beyond tolerance
                 continue
             fresh_vps.append((vp, obs_time))
+            if vp.trip_id:
+                existing_vp = vps_by_trip.get(vp.trip_id)
+                if existing_vp is None or obs_time > existing_vp[1]:
+                    vps_by_trip[vp.trip_id] = (vp, obs_time)
 
-        if not fresh_vps:
+        fresh_tus: list[TripUpdate] = []
+        trip_updates_by_trip: dict[str, list[TripUpdate]] = {}
+        canceled_trip_ids: set[str] = set()
+        for tu in all_tus:
+            raw_ts = tu.update_timestamp or tu.feed_timestamp or tu.recorded_at
+            if raw_ts is None:
+                continue
+            obs_time = to_utc(raw_ts)
+            if obs_time is None:
+                continue
+            age_seconds = (now_utc - obs_time).total_seconds()
+            if age_seconds < -60.0 or age_seconds > self.max_realtime_age_seconds:
+                continue
+            fresh_tus.append(tu)
+            trip_updates_by_trip.setdefault(tu.trip_id, []).append(tu)
+            if tu.schedule_relationship == 3:  # CANCELED
+                canceled_trip_ids.add(tu.trip_id)
+
+        if not fresh_vps and not fresh_tus:
             return []
 
         # 6. Eagerly load matching static trips with routes and stop times
-        candidate_trip_ids = list({vp.trip_id for vp, _ in fresh_vps if vp.trip_id})
+        candidate_trip_ids = list(
+            (set(vps_by_trip.keys()) | set(trip_updates_by_trip.keys()))
+            - canceled_trip_ids
+        )
+        if not candidate_trip_ids:
+            return []
+
         trip_stmt = (
             select(Trip)
             .options(
@@ -239,20 +272,26 @@ class ArrivalPredictionService:
         trips = (await session.execute(trip_stmt)).scalars().all()
         trips_by_id = {t.trip_id: t for t in trips}
 
-        # 7. Evaluate arrival prediction for each live vehicle
+        # 7. Evaluate arrival prediction for each candidate trip
         predictions_by_trip: dict[str, StopArrivalPrediction] = {}
-        for vp, obs_time in fresh_vps:
-            if not vp.trip_id:
-                continue
-            trip = trips_by_id.get(vp.trip_id)
-            if not trip:
-                continue
+        for trip_id, trip in trips_by_id.items():
+            vp_entry = vps_by_trip.get(trip_id)
+            vp = vp_entry[0] if vp_entry else None
+            vp_obs_time = vp_entry[1] if vp_entry else None
+            tus_for_trip = trip_updates_by_trip.get(trip_id, [])
 
             # Determine service date and active service
+            # Check start_date from VP or TripUpdate
+            start_date_str: str | None = None
+            if vp and vp.start_date:
+                start_date_str = vp.start_date
+            elif tus_for_trip and tus_for_trip[0].start_date:
+                start_date_str = tus_for_trip[0].start_date
+
             service_date: date | None = None
-            if vp.start_date:
+            if start_date_str:
                 try:
-                    trip_date = datetime.strptime(vp.start_date, "%Y%m%d").date()
+                    trip_date = datetime.strptime(start_date_str, "%Y%m%d").date()
                 except ValueError:
                     trip_date = None
 
@@ -291,10 +330,6 @@ class ArrivalPredictionService:
                 continue
 
             target_seq = target_st.stop_sequence
-            curr_seq = vp.current_stop_sequence
-            if curr_seq is None or curr_seq > target_seq:
-                # Target stop is not downstream of vehicle position
-                continue
 
             # Compute scheduled arrival time
             try:
@@ -314,104 +349,187 @@ class ArrivalPredictionService:
             sched_local = service_midnight + timedelta(seconds=arr_seconds)
             scheduled_arrival_utc = sched_local.astimezone(UTC)
 
-            # Query historical observations for same trip / vehicle
-            since_history = now_utc - timedelta(minutes=self.history_lookback_minutes)
-            obs_conditions = [VehicleObservation.trip_id == trip.trip_id]
-            if vp.vehicle_id:
-                obs_conditions.append(VehicleObservation.vehicle_id == vp.vehicle_id)
+            # Check if there is a matching TripUpdate for target stop
+            matching_tu: TripUpdate | None = None
+            for tu in tus_for_trip:
+                if (tu.stop_id and tu.stop_id == target_stop.stop_id) or (
+                    tu.stop_sequence is not None and tu.stop_sequence == target_seq
+                ):
+                    matching_tu = tu
+                    break
 
-            hist_stmt = (
-                select(VehicleObservation)
-                .where(
-                    VehicleObservation.feed_id == feed.id,
-                    VehicleObservation.observed_at >= since_history,
-                    or_(*obs_conditions),
-                )
-                .order_by(VehicleObservation.observed_at.desc())
-                .limit(100)
-            )
-            hist_rows = (await session.execute(hist_stmt)).scalars().all()
+            pred: StopArrivalPrediction | None = None
 
-            # Map earlier scheduled stops on this trip
-            earlier_stops_by_id: dict[str, str] = {}
-            earlier_stops_by_seq: dict[int, str] = {}
-            for st in trip.stop_times:
-                if st.stop_sequence < target_seq:
-                    if st.stop:
-                        earlier_stops_by_id[st.stop.stop_id] = st.arrival_time
-                    earlier_stops_by_seq[st.stop_sequence] = st.arrival_time
-
-            # Calculate delays from STOPPED_AT observations at known scheduled stops
-            delays_by_stop: dict[str, int] = {}
-            for h in hist_rows:
-                if h.current_status != 1:  # Only STOPPED_AT
-                    continue
-                h_time = to_utc(h.observed_at)
-                if h_time is None:
+            if matching_tu is not None:
+                # Check for skipped stop
+                if matching_tu.stop_schedule_relationship == 1:  # SKIPPED
                     continue
 
-                matched_arr_str = None
-                matched_key = None
-                if h.stop_id and h.stop_id in earlier_stops_by_id:
-                    matched_arr_str = earlier_stops_by_id[h.stop_id]
-                    matched_key = h.stop_id
-                elif (
-                    h.current_stop_sequence
-                    and h.current_stop_sequence in earlier_stops_by_seq
-                ):
-                    matched_arr_str = earlier_stops_by_seq[h.current_stop_sequence]
-                    matched_key = f"seq_{h.current_stop_sequence}"
-
-                if (
-                    matched_arr_str
-                    and matched_key
-                    and matched_key not in delays_by_stop
-                ):
-                    try:
-                        s_secs = parse_gtfs_time_to_seconds(matched_arr_str)
-                    except ValueError:
+                # Precedence: arrival_time > arrival_delay > departure_time
+                # > departure_delay > trip_delay
+                if matching_tu.arrival_time is not None:
+                    est_arr = to_utc(matching_tu.arrival_time)
+                    if est_arr is None:
                         continue
-                    s_local = service_midnight + timedelta(seconds=s_secs)
-                    s_utc = s_local.astimezone(UTC)
-                    delay_sec = int((h_time - s_utc).total_seconds())
-                    delays_by_stop[matched_key] = delay_sec
+                    delay_sec = int((est_arr - scheduled_arrival_utc).total_seconds())
+                elif matching_tu.arrival_delay is not None:
+                    delay_sec = matching_tu.arrival_delay
+                    est_arr = scheduled_arrival_utc + timedelta(seconds=delay_sec)
+                elif matching_tu.departure_time is not None:
+                    est_arr = to_utc(matching_tu.departure_time)
+                    if est_arr is None:
+                        continue
+                    delay_sec = int((est_arr - scheduled_arrival_utc).total_seconds())
+                elif matching_tu.departure_delay is not None:
+                    delay_sec = matching_tu.departure_delay
+                    est_arr = scheduled_arrival_utc + timedelta(seconds=delay_sec)
+                elif matching_tu.trip_delay is not None:
+                    delay_sec = matching_tu.trip_delay
+                    est_arr = scheduled_arrival_utc + timedelta(seconds=delay_sec)
+                else:
+                    est_arr = scheduled_arrival_utc
+                    delay_sec = 0
 
-            delays = list(delays_by_stop.values())
-            if len(delays) >= self.min_sample_threshold:
-                median_delay = int(statistics.median(delays))
-                delay_seconds = median_delay
-                estimated_arrival_utc = scheduled_arrival_utc + timedelta(
-                    seconds=median_delay
+                tu_obs_raw = (
+                    matching_tu.update_timestamp
+                    or matching_tu.feed_timestamp
+                    or matching_tu.recorded_at
                 )
-                prediction_source = "HISTORY_ADJUSTED"
-            else:
-                delay_seconds = 0
-                estimated_arrival_utc = scheduled_arrival_utc
-                prediction_source = "SCHEDULE_ONLY"
+                tu_obs_time = to_utc(tu_obs_raw)
+                vehicle_id = matching_tu.vehicle_id or (vp.vehicle_id if vp else None)
 
-            pred = StopArrivalPrediction(
-                feed_slug=feed.slug,
-                feed_id=feed.id,
-                stop_id=target_stop.stop_id,
-                trip_id=trip.trip_id,
-                route_id=trip.route.route_id,
-                route_short_name=trip.route.short_name,
-                trip_headsign=trip.trip_headsign,
-                vehicle_id=vp.vehicle_id,
-                stop_sequence=target_st.stop_sequence,
-                scheduled_arrival_time=scheduled_arrival_utc,
-                estimated_arrival_time=estimated_arrival_utc,
-                delay_seconds=delay_seconds,
-                prediction_source=prediction_source,
-                source_observation_time=obs_time,
-            )
+                pred = StopArrivalPrediction(
+                    feed_slug=feed.slug,
+                    feed_id=feed.id,
+                    stop_id=target_stop.stop_id,
+                    trip_id=trip.trip_id,
+                    route_id=trip.route.route_id,
+                    route_short_name=trip.route.short_name,
+                    trip_headsign=trip.trip_headsign,
+                    vehicle_id=vehicle_id,
+                    stop_sequence=target_st.stop_sequence,
+                    scheduled_arrival_time=scheduled_arrival_utc,
+                    estimated_arrival_time=est_arr,
+                    delay_seconds=delay_sec,
+                    prediction_source="TRIP_UPDATE",
+                    source_observation_time=tu_obs_time,
+                )
 
-            # Deduplicate by trip_id, keeping the latest telemetry
-            existing = predictions_by_trip.get(trip.trip_id)
-            if existing is None or (
-                obs_time > (existing.source_observation_time or obs_time)
-            ):
-                predictions_by_trip[trip.trip_id] = pred
+            elif vp is not None and vp_obs_time is not None:
+                # Fall back to live vehicle position and historical delay adjustment
+                curr_seq = vp.current_stop_sequence
+                if curr_seq is None or curr_seq > target_seq:
+                    # Target stop is not downstream of vehicle position
+                    continue
+
+                # Query historical observations for same trip / vehicle
+                since_history = now_utc - timedelta(
+                    minutes=self.history_lookback_minutes
+                )
+                obs_conditions = [VehicleObservation.trip_id == trip.trip_id]
+                if vp.vehicle_id:
+                    obs_conditions.append(
+                        VehicleObservation.vehicle_id == vp.vehicle_id
+                    )
+
+                hist_stmt = (
+                    select(VehicleObservation)
+                    .where(
+                        VehicleObservation.feed_id == feed.id,
+                        VehicleObservation.observed_at >= since_history,
+                        or_(*obs_conditions),
+                    )
+                    .order_by(VehicleObservation.observed_at.desc())
+                    .limit(100)
+                )
+                hist_rows = (await session.execute(hist_stmt)).scalars().all()
+
+                # Map earlier scheduled stops on this trip
+                earlier_stops_by_id: dict[str, str] = {}
+                earlier_stops_by_seq: dict[int, str] = {}
+                for st in trip.stop_times:
+                    if st.stop_sequence < target_seq:
+                        if st.stop:
+                            earlier_stops_by_id[st.stop.stop_id] = st.arrival_time
+                        earlier_stops_by_seq[st.stop_sequence] = st.arrival_time
+
+                # Calculate delays from STOPPED_AT observations at known scheduled stops
+                delays_by_stop: dict[str, int] = {}
+                for h in hist_rows:
+                    if h.current_status != 1:  # Only STOPPED_AT
+                        continue
+                    h_time = to_utc(h.observed_at)
+                    if h_time is None:
+                        continue
+
+                    matched_arr_str = None
+                    matched_key = None
+                    if h.stop_id and h.stop_id in earlier_stops_by_id:
+                        matched_arr_str = earlier_stops_by_id[h.stop_id]
+                        matched_key = h.stop_id
+                    elif (
+                        h.current_stop_sequence
+                        and h.current_stop_sequence in earlier_stops_by_seq
+                    ):
+                        matched_arr_str = earlier_stops_by_seq[h.current_stop_sequence]
+                        matched_key = f"seq_{h.current_stop_sequence}"
+
+                    if (
+                        matched_arr_str
+                        and matched_key
+                        and matched_key not in delays_by_stop
+                    ):
+                        try:
+                            s_secs = parse_gtfs_time_to_seconds(matched_arr_str)
+                        except ValueError:
+                            continue
+                        s_local = service_midnight + timedelta(seconds=s_secs)
+                        s_utc = s_local.astimezone(UTC)
+                        delay_sec = int((h_time - s_utc).total_seconds())
+                        delays_by_stop[matched_key] = delay_sec
+
+                delays = list(delays_by_stop.values())
+                if len(delays) >= self.min_sample_threshold:
+                    median_delay = int(statistics.median(delays))
+                    delay_seconds = median_delay
+                    estimated_arrival_utc = scheduled_arrival_utc + timedelta(
+                        seconds=median_delay
+                    )
+                    prediction_source = "HISTORY_ADJUSTED"
+                else:
+                    delay_seconds = 0
+                    estimated_arrival_utc = scheduled_arrival_utc
+                    prediction_source = "SCHEDULE_ONLY"
+
+                pred = StopArrivalPrediction(
+                    feed_slug=feed.slug,
+                    feed_id=feed.id,
+                    stop_id=target_stop.stop_id,
+                    trip_id=trip.trip_id,
+                    route_id=trip.route.route_id,
+                    route_short_name=trip.route.short_name,
+                    trip_headsign=trip.trip_headsign,
+                    vehicle_id=vp.vehicle_id,
+                    stop_sequence=target_st.stop_sequence,
+                    scheduled_arrival_time=scheduled_arrival_utc,
+                    estimated_arrival_time=estimated_arrival_utc,
+                    delay_seconds=delay_seconds,
+                    prediction_source=prediction_source,
+                    source_observation_time=vp_obs_time,
+                )
+
+            if pred is not None:
+                # Deduplicate by trip_id, keeping TRIP_UPDATE or latest telemetry
+                existing = predictions_by_trip.get(trip.trip_id)
+                if (
+                    existing is None
+                    or pred.prediction_source == "TRIP_UPDATE"
+                    or (
+                        (pred.source_observation_time or now_utc)
+                        > (existing.source_observation_time or now_utc)
+                    )
+                ):
+                    predictions_by_trip[trip.trip_id] = pred
 
         predictions = list(predictions_by_trip.values())
         predictions.sort(

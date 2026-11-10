@@ -13,6 +13,7 @@ from app.models import (
     StopTime,
     TransitFeed,
     Trip,
+    TripUpdate,
     VehicleObservation,
     VehiclePosition,
 )
@@ -33,6 +34,7 @@ def test_metadata_contains_all_models() -> None:
         "vehicle_positions",
         "vehicle_observations",
         "shapes",
+        "trip_updates",
     }
     assert expected.issubset(table_names), f"Missing tables: {expected - table_names}"
 
@@ -62,6 +64,10 @@ def test_transit_feed_model_structure() -> None:
         "trips",
         "calendars",
         "calendar_dates",
+        "shapes",
+        "vehicle_positions",
+        "vehicle_observations",
+        "trip_updates",
     }.issubset(relationships)
 
 
@@ -416,6 +422,46 @@ def test_shape_model_structure() -> None:
         if uc.__class__.__name__ == "UniqueConstraint"
     }
     assert ("feed_id", "shape_id", "shape_pt_sequence") in unique_constraints
+
+    # Relationships
+    relationships = {r.key: r.entity.class_ for r in mapper.relationships}
+    assert relationships["feed"] is TransitFeed
+
+
+def test_trip_update_model_structure() -> None:
+    """Verify columns, constraints, and relationships on TripUpdate model."""
+    mapper = inspect(TripUpdate)
+    columns = {c.name for c in mapper.columns}
+    expected_cols = {
+        "id",
+        "feed_id",
+        "entity_id",
+        "trip_id",
+        "route_id",
+        "direction_id",
+        "start_time",
+        "start_date",
+        "schedule_relationship",
+        "vehicle_id",
+        "vehicle_label",
+        "vehicle_license_plate",
+        "stop_sequence",
+        "stop_id",
+        "arrival_time",
+        "arrival_delay",
+        "arrival_uncertainty",
+        "departure_time",
+        "departure_delay",
+        "departure_uncertainty",
+        "stop_schedule_relationship",
+        "trip_delay",
+        "update_timestamp",
+        "feed_timestamp",
+        "recorded_at",
+        "created_at",
+        "updated_at",
+    }
+    assert expected_cols.issubset(columns)
 
     # Relationships
     relationships = {r.key: r.entity.class_ for r in mapper.relationships}

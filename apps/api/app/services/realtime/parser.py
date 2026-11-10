@@ -56,6 +56,54 @@ class ParsedRealtimeFeed:
     vehicles: list[ParsedVehiclePosition]
 
 
+@dataclass(frozen=True, slots=True)
+class ParsedStopTimeEvent:
+    """Arrival or departure time event for a stop."""
+
+    time: datetime | None = None
+    delay: int | None = None
+    uncertainty: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedStopTimeUpdate:
+    """Real-time arrival and departure update for a single stop along a trip."""
+
+    stop_sequence: int | None = None
+    stop_id: str | None = None
+    arrival: ParsedStopTimeEvent | None = None
+    departure: ParsedStopTimeEvent | None = None
+    schedule_relationship: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedTripUpdate:
+    """Validated in-memory trip update from GTFS-Realtime."""
+
+    entity_id: str
+    trip_id: str
+    route_id: str | None = None
+    direction_id: int | None = None
+    start_time: str | None = None
+    start_date: str | None = None
+    schedule_relationship: int | None = None
+    vehicle_id: str | None = None
+    vehicle_label: str | None = None
+    vehicle_license_plate: str | None = None
+    timestamp: datetime | None = None
+    delay: int | None = None
+    stop_time_updates: tuple[ParsedStopTimeUpdate, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedTripUpdatesFeed:
+    """Validated feed message containing header metadata and trip updates."""
+
+    gtfs_realtime_version: str
+    feed_timestamp: datetime | None
+    trip_updates: list[ParsedTripUpdate]
+
+
 def parse_vehicle_positions(payload: bytes) -> ParsedRealtimeFeed:
     """Decode and validate a GTFS-Realtime Protocol Buffer payload.
 
@@ -291,4 +339,249 @@ def parse_vehicle_positions(payload: bytes) -> ParsedRealtimeFeed:
         gtfs_realtime_version=version,
         feed_timestamp=feed_timestamp,
         vehicles=vehicles,
+    )
+
+
+def parse_trip_updates(payload: bytes) -> ParsedTripUpdatesFeed:
+    """Decode and validate a GTFS-Realtime Protocol Buffer payload for TripUpdates.
+
+    Args:
+        payload: Raw protobuf bytes from the GTFS-RT TripUpdates endpoint.
+
+    Returns:
+        ParsedTripUpdatesFeed: Container with validated header and trip update records.
+
+    Raises:
+        RealtimeParseError: On invalid protobuf syntax, duplicate entities,
+            or corrupted timestamp/delay fields.
+        UnsupportedIncrementalityError: If the feed uses DIFFERENTIAL mode.
+    """
+    if not payload:
+        raise RealtimeParseError("Received empty payload for GTFS-Realtime feed")
+
+    feed_message = gtfs_realtime_pb2.FeedMessage()
+    try:
+        feed_message.ParseFromString(payload)
+    except DecodeError as exc:
+        raise RealtimeParseError(
+            f"Failed to decode protobuf FeedMessage: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise RealtimeParseError(f"Corrupted GTFS-Realtime message: {exc}") from exc
+
+    # 1. Validate FeedHeader
+    if not feed_message.HasField("header"):
+        raise RealtimeParseError("FeedMessage missing required FeedHeader")
+
+    header = feed_message.header
+    version = header.gtfs_realtime_version
+    if not version:
+        raise RealtimeParseError("FeedHeader missing gtfs_realtime_version")
+
+    # Incrementality validation: Reject DIFFERENTIAL feeds cleanly
+    incrementality = header.incrementality
+    if incrementality == gtfs_realtime_pb2.FeedHeader.Incrementality.DIFFERENTIAL:
+        raise UnsupportedIncrementalityError(
+            "DIFFERENTIAL incrementality is not supported; only FULL_DATASET accepted"
+        )
+    if incrementality != gtfs_realtime_pb2.FeedHeader.Incrementality.FULL_DATASET:
+        raise UnsupportedIncrementalityError(
+            f"Unsupported feed incrementality mode: {incrementality}"
+        )
+
+    # Feed header timestamp (timezone-aware UTC)
+    feed_timestamp: datetime | None = None
+    if header.HasField("timestamp") and header.timestamp > 0:
+        if header.timestamp > MAX_TIMESTAMP_SECONDS:
+            raise RealtimeParseError(
+                f"FeedHeader timestamp {header.timestamp} is unreasonably far in future"
+            )
+        try:
+            feed_timestamp = datetime.fromtimestamp(header.timestamp, tz=UTC)
+        except (ValueError, OverflowError, OSError) as exc:
+            raise RealtimeParseError(f"Invalid FeedHeader timestamp: {exc}") from exc
+
+    # 2. Validate FeedEntities and extract trip updates
+    seen_entity_ids: set[str] = set()
+    trip_updates: list[ParsedTripUpdate] = []
+
+    for entity in feed_message.entity:
+        entity_id = entity.id
+        if not entity_id or not entity_id.strip():
+            raise RealtimeParseError("FeedEntity missing required identifier")
+
+        entity_id = entity_id.strip()
+        if entity_id in seen_entity_ids:
+            raise RealtimeParseError(
+                f"Duplicate entity ID found in feed: '{entity_id}'"
+            )
+        seen_entity_ids.add(entity_id)
+
+        # Ignore deleted entities or entities without trip updates
+        # (e.g. vehicle positions or alerts if included in combined feeds)
+        if entity.is_deleted or not entity.HasField("trip_update"):
+            continue
+
+        tu = entity.trip_update
+
+        # TripDescriptor is required for TripUpdate
+        if not tu.HasField("trip"):
+            raise RealtimeParseError(
+                f"TripUpdate in entity '{entity_id}' missing required trip descriptor"
+            )
+
+        t_desc = tu.trip
+        trip_id = t_desc.trip_id.strip() if t_desc.trip_id else None
+        if not trip_id:
+            raise RealtimeParseError(
+                f"TripUpdate in entity '{entity_id}' missing trip_id"
+            )
+
+        route_id = t_desc.route_id.strip() if t_desc.route_id else None
+        direction_id = (
+            int(t_desc.direction_id) if t_desc.HasField("direction_id") else None
+        )
+        start_time = t_desc.start_time.strip() if t_desc.start_time else None
+        start_date = t_desc.start_date.strip() if t_desc.start_date else None
+        schedule_relationship = (
+            int(t_desc.schedule_relationship)
+            if t_desc.HasField("schedule_relationship")
+            else None
+        )
+
+        # VehicleDescriptor (optional)
+        vehicle_id: str | None = None
+        vehicle_label: str | None = None
+        license_plate: str | None = None
+        if tu.HasField("vehicle"):
+            v_desc = tu.vehicle
+            vehicle_id = v_desc.id.strip() if v_desc.id else None
+            vehicle_label = v_desc.label.strip() if v_desc.label else None
+            license_plate = (
+                v_desc.license_plate.strip() if v_desc.license_plate else None
+            )
+
+        # Trip update timestamp
+        update_timestamp: datetime | None = None
+        if tu.HasField("timestamp") and tu.timestamp > 0:
+            if tu.timestamp > MAX_TIMESTAMP_SECONDS:
+                raise RealtimeParseError(
+                    f"TripUpdate timestamp {tu.timestamp} for '{entity_id}' is invalid"
+                )
+            try:
+                update_timestamp = datetime.fromtimestamp(tu.timestamp, tz=UTC)
+            except (ValueError, OverflowError, OSError) as exc:
+                raise RealtimeParseError(
+                    f"Invalid trip timestamp for entity '{entity_id}': {exc}"
+                ) from exc
+
+        # Trip-level delay
+        trip_delay: int | None = int(tu.delay) if tu.HasField("delay") else None
+
+        # StopTimeUpdate entries
+        stop_updates: list[ParsedStopTimeUpdate] = []
+        for stu in tu.stop_time_update:
+            stop_sequence = (
+                int(stu.stop_sequence) if stu.HasField("stop_sequence") else None
+            )
+            stop_id = stu.stop_id.strip() if stu.stop_id else None
+            if stop_sequence is None and not stop_id:
+                raise RealtimeParseError(
+                    f"StopTimeUpdate in entity '{entity_id}' missing both "
+                    "stop_sequence and stop_id"
+                )
+
+            # Arrival event
+            arrival_event: ParsedStopTimeEvent | None = None
+            if stu.HasField("arrival"):
+                arr = stu.arrival
+                arr_time: datetime | None = None
+                if arr.HasField("time") and arr.time > 0:
+                    if arr.time > MAX_TIMESTAMP_SECONDS:
+                        raise RealtimeParseError(
+                            f"Arrival time {arr.time} in entity '{entity_id}' "
+                            "is out of bounds"
+                        )
+                    try:
+                        arr_time = datetime.fromtimestamp(arr.time, tz=UTC)
+                    except (ValueError, OverflowError, OSError) as exc:
+                        raise RealtimeParseError(
+                            f"Invalid arrival time in entity '{entity_id}': {exc}"
+                        ) from exc
+                arr_delay = int(arr.delay) if arr.HasField("delay") else None
+                arr_unc = int(arr.uncertainty) if arr.HasField("uncertainty") else None
+                arrival_event = ParsedStopTimeEvent(
+                    time=arr_time,
+                    delay=arr_delay,
+                    uncertainty=arr_unc,
+                )
+
+            # Departure event
+            departure_event: ParsedStopTimeEvent | None = None
+            if stu.HasField("departure"):
+                dep = stu.departure
+                dep_time: datetime | None = None
+                if dep.HasField("time") and dep.time > 0:
+                    if dep.time > MAX_TIMESTAMP_SECONDS:
+                        raise RealtimeParseError(
+                            f"Departure time {dep.time} in entity '{entity_id}' "
+                            "is out of bounds"
+                        )
+                    try:
+                        dep_time = datetime.fromtimestamp(dep.time, tz=UTC)
+                    except (ValueError, OverflowError, OSError) as exc:
+                        raise RealtimeParseError(
+                            f"Invalid departure time in entity '{entity_id}': {exc}"
+                        ) from exc
+                dep_delay = int(dep.delay) if dep.HasField("delay") else None
+                dep_unc = int(dep.uncertainty) if dep.HasField("uncertainty") else None
+                departure_event = ParsedStopTimeEvent(
+                    time=dep_time,
+                    delay=dep_delay,
+                    uncertainty=dep_unc,
+                )
+
+            stu_rel = (
+                int(stu.schedule_relationship)
+                if stu.HasField("schedule_relationship")
+                else None
+            )
+
+            stop_updates.append(
+                ParsedStopTimeUpdate(
+                    stop_sequence=stop_sequence,
+                    stop_id=stop_id,
+                    arrival=arrival_event,
+                    departure=departure_event,
+                    schedule_relationship=stu_rel,
+                )
+            )
+
+        trip_updates.append(
+            ParsedTripUpdate(
+                entity_id=entity_id,
+                trip_id=trip_id,
+                route_id=route_id,
+                direction_id=direction_id,
+                start_time=start_time,
+                start_date=start_date,
+                schedule_relationship=schedule_relationship,
+                vehicle_id=vehicle_id,
+                vehicle_label=vehicle_label,
+                vehicle_license_plate=license_plate,
+                timestamp=update_timestamp,
+                delay=trip_delay,
+                stop_time_updates=tuple(stop_updates),
+            )
+        )
+
+    logger.info(
+        "Parsed %d trip updates from GTFS-RT feed (header time: %s)",
+        len(trip_updates),
+        feed_timestamp,
+    )
+    return ParsedTripUpdatesFeed(
+        gtfs_realtime_version=version,
+        feed_timestamp=feed_timestamp,
+        trip_updates=trip_updates,
     )

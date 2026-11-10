@@ -219,6 +219,22 @@ const mockArrivals: StopArrivalPrediction[] = [
     prediction_source: "SCHEDULE_ONLY",
     source_observation_time: null,
   },
+  {
+    feed_slug: "metro-city",
+    feed_id: 1,
+    stop_id: "MC-101",
+    trip_id: "trip-green-3",
+    route_id: "route-green",
+    route_short_name: "G3",
+    trip_headsign: "North Beach",
+    vehicle_id: "veh-5002",
+    stop_sequence: 4,
+    scheduled_arrival_time: "2026-11-10T12:25:00Z",
+    estimated_arrival_time: "2026-11-10T12:30:00Z",
+    delay_seconds: 300, // +5 min late
+    prediction_source: "TRIP_UPDATE",
+    source_observation_time: "2026-11-10T12:24:00Z",
+  },
 ];
 
 function createTestQueryClient() {
@@ -450,6 +466,13 @@ describe("Transit Explorer Components", () => {
       expect(screen.getByText("South Station")).toBeInTheDocument();
       expect(screen.getByText("On time")).toBeInTheDocument();
       expect(screen.getByText("Schedule")).toBeInTheDocument();
+
+      // Trip 3: G3 North Beach (+5 min late, Live TripUpdate)
+      expect(screen.getByText("G3")).toBeInTheDocument();
+      expect(screen.getByText("North Beach")).toBeInTheDocument();
+      expect(screen.getByText("+5 min late")).toBeInTheDocument();
+      expect(screen.getByText("Live TripUpdate")).toBeInTheDocument();
+      expect(screen.getByText(/Vehicle #veh-5002/i)).toBeInTheDocument();
     });
 
     it("triggers refetch when Refresh button is clicked", async () => {

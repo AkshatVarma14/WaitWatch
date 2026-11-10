@@ -675,4 +675,77 @@ Implemented client-side real-time periodic polling and live data refresh across 
   - Browser-based client polling queries the existing read-only REST endpoints; vehicle positions and stop arrivals only update when backend feeds or GTFS-RT pollers ingest new telemetry.
   - Push-based streaming (WebSockets or Server-Sent Events) is not yet implemented.
 - **Next Authorized Step**:
-  - **Stage 4, Slice 4.4**: GTFS-Realtime TripUpdates Ingestion (or End-to-End Polish & Docker Deployment Scaffolding).
+  - **Stage 4, Slice 4.4**: GTFS-Realtime TripUpdates Ingestion (Completed below).
+
+---
+
+### 2026-11-10 — Stage 4, Slice 4.4: GTFS-Realtime TripUpdates Ingestion
+
+#### Overview
+Implemented the GTFS-Realtime TripUpdates ingestion pipeline, database persistence, and ETA prediction engine integration. Reused the existing MobilityData Protocol Buffer runtime (`gtfs_realtime_pb2.FeedMessage`) and resilient streaming downloader to decode and validate `TripUpdate` entities without introducing new external dependencies or separate worker processes. Designed an atomic feed-scoped current-state snapshot table (`trip_updates`) governed by forward migration `0006_trip_updates`, replacing feed snapshots idempotently and updating feed poll timestamps. Integrated TripUpdates directly into `ArrivalPredictionService` (`GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`), evaluating the high-fidelity `TRIP_UPDATE` prediction source ahead of client-side dead reckoning or static schedules, strictly enforcing the GTFS-Realtime standard precedence of absolute event times (`arrival.time`) over relative delays (`arrival.delay`), supporting departure event fallbacks, and suppressing canceled trips (`CANCELED`) and skipped stops (`SKIPPED`). Updated the frontend Transit Explorer to render distinct "Live TripUpdate" emerald status badges alongside scheduled vs estimated arrival times, delay badges, and observation ages.
+
+#### Key Deliverables & Design Decisions
+1. **GTFS-RT TripUpdate Database Model & Migration** (`apps/api/app/models/trip_update.py`, `apps/api/alembic/versions/0006_trip_updates.py`):
+   - Created `TripUpdate` model storing feed-scoped trip updates and constituent stop-time predictions: `entity_id`, `trip_id`, `route_id`, `direction_id`, `start_time`, `start_date`, `schedule_relationship`, `vehicle_id`, `stop_sequence`, `stop_id`, arrival and departure event times, delays, uncertainties, `stop_schedule_relationship`, `trip_delay`, and telemetry timestamps.
+   - Added indexes on `feed_id`, `(feed_id, trip_id)`, `(feed_id, stop_id)`, `(feed_id, entity_id)`, and `(feed_id, trip_id, stop_id)` with `ondelete="CASCADE"` foreign key to `transit_feeds.id`.
+   - Forward migration `0006_trip_updates` with verified static SQL generation for upgrade and downgrade.
+   - Added `trip_updates` relationship to `TransitFeed` model with cascade delete and passive deletes.
+2. **Defensive Protocol Buffer Parsing** (`apps/api/app/services/realtime/parser.py`):
+   - Built `parse_trip_updates(payload: bytes) -> ParsedTripUpdatesFeed` using `gtfs_realtime_pb2.FeedMessage`.
+   - Validated `FeedHeader`: requires valid version, enforces bounds on header timestamps, and rejects `DIFFERENTIAL` incrementality with `UnsupportedIncrementalityError` (only `FULL_DATASET` supported).
+   - Validated `FeedEntity`: requires entity identifier, rejects duplicate entity IDs, and skips non-trip entities or deleted entities cleanly.
+   - Validated `TripUpdate`: requires `trip_id`, validates timestamp bounds (< 2100 epoch seconds), parses arrival/departure events with delay and absolute POSIX times, and captures trip-level cancellations and general trip delays even when stop updates are omitted.
+3. **Atomic Ingestion Service & CLI Poller** (`apps/api/app/services/realtime/trip_update_service.py`, `apps/api/app/services/realtime/cli.py`):
+   - Implemented `TripUpdateIngestionService.ingest_for_feed(...)`: downloads via `download_realtime_feed` using feed-configured API key environment variables without logging or exposing credentials.
+   - Graceful skip: returns 0 without raising an error when a feed has no `realtime_trip_updates_url` configured.
+   - Atomic replacement: deletes previous feed snapshot rows and bulk-inserts new ones in a single database transaction, rolling back on error and raising `RealtimePersistenceError`.
+   - Extended `realtime-cli` with `poll-trip-updates` subcommand supporting `--feed-id`, `--slug`, and `--file`.
+4. **ETA Prediction Engine Integration** (`apps/api/app/services/prediction/service.py`, `apps/api/app/schemas/transit.py`):
+   - Updated `ArrivalPredictionService.predict_arrivals_for_stop`: queries fresh `TripUpdate` records alongside `VehiclePosition` records within the 300s freshness window.
+   - Precedence: when a trip has a matching `TripUpdate` for the target stop, uses prediction source `"TRIP_UPDATE"` directly from agency dispatch. Absolute event times (`time`) take strict precedence over relative delays (`delay`).
+   - Exception handling: suppresses canceled trips (`schedule_relationship == CANCELED`) and skipped stops (`stop_schedule_relationship == SKIPPED`).
+   - Coexistence and fallback: trips without TripUpdates fall back transparently to vehicle position historical delay adjustments (`HISTORY_ADJUSTED`) or scheduled timetable times (`SCHEDULE_ONLY`).
+5. **Frontend UI Integration** (`apps/web/src/types/transit.ts`, `apps/web/src/lib/formatters.ts`, `apps/web/src/components/arrivalsBoard.tsx`):
+   - Added `"TRIP_UPDATE"` to `PredictionSource` type.
+   - Formatted `"TRIP_UPDATE"` with a distinct "Live TripUpdate" emerald badge (`bg-emerald-900/60 text-emerald-300 border border-emerald-700/60`) and passenger-facing tooltip description.
+   - Rendered in `ArrivalsBoard` with scheduled time, estimated time, delay badges, and observation age.
+6. **Comprehensive Unit & Integration Test Suites**:
+   - Backend Pytest (132 tests total across 10 files): 17 new tests in `test_trip_updates.py` covering protobuf parsing, error cases, missing header, differential rejection, duplicate entities, ingestion idempotency, feed isolation, CLI polling, stop arrival predictions with precedence and cancellation suppression, and stale telemetry handling; updated `test_models.py` and `test_alembic.py`.
+   - Frontend Vitest (82 tests total across 6 files): tested `"TRIP_UPDATE"` formatting and live arrival card rendering in `TransitExplorer.test.tsx` and `formatters.test.ts`.
+
+#### Verification Evidence
+- **Backend Pytest**: 132 passed in 14.55s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero errors, 62 files formatted cleanly (`py -3.12 -m ruff check app tests alembic`, `py -3.12 -m ruff format --check app tests alembic`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall app tests alembic`).
+- **Alembic Migrations**: Static SQL upgrade and downgrade verified without error (`0006_trip_updates`).
+- **Frontend Vitest**: 82 passed across 6 test suites in 6.14s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite in 3.50s (`npm.cmd run build`).
+
+#### Changed / Added Files
+- `apps/api/app/models/trip_update.py` (new `TripUpdate` snapshot model)
+- `apps/api/app/models/feed.py` (added `trip_updates` relationship to `TransitFeed`)
+- `apps/api/app/models/__init__.py` (exported `TripUpdate`)
+- `apps/api/alembic/versions/0006_trip_updates.py` (forward migration for `trip_updates` table)
+- `apps/api/app/services/realtime/parser.py` (`parse_trip_updates` parser and dataclasses)
+- `apps/api/app/services/realtime/trip_update_service.py` (`TripUpdateIngestionService` implementation)
+- `apps/api/app/services/realtime/cli.py` (added `poll-trip-updates` CLI subcommand)
+- `apps/api/app/services/realtime/__init__.py` (exported service and parser dataclasses)
+- `apps/api/app/services/prediction/service.py` (integrated `TRIP_UPDATE` into arrival predictions)
+- `apps/api/app/schemas/transit.py` (updated `StopArrivalPrediction.prediction_source` description)
+- `apps/api/tests/test_alembic.py` (asserted `0006_trip_updates` revision)
+- `apps/api/tests/test_models.py` (asserted `TripUpdate` table and model structure)
+- `apps/api/tests/test_trip_updates.py` (17 unit and integration tests for TripUpdates)
+- `apps/web/src/types/transit.ts` (added `TRIP_UPDATE` to `PredictionSource`)
+- `apps/web/src/lib/formatters.ts` (added `TRIP_UPDATE` badge and styling)
+- `apps/web/src/__tests__/formatters.test.ts` (added tests for `TRIP_UPDATE`)
+- `apps/web/src/__tests__/TransitExplorer.test.tsx` (added tests for `TRIP_UPDATE` arrival card)
+- `README.md` (updated Stage 4 milestones and test counts)
+- `docs/architecture/overview.md` (updated architecture status with TripUpdates)
+- `docs/development-ledger.md` (this ledger entry)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - Live TripUpdates and vehicle positions are ingested on-demand or via scheduled pollers; push-based WebSocket broadcasting to client frontends is scheduled for later roadmap polish.
+- **Next Authorized Step**:
+  - **Stage 4, Slice 4.5**: Docker Compose Production Scaffolding & End-to-End Application Polish (or WebSocket Live Push).

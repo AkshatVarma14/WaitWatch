@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.shape import Shape
     from app.models.stop import Stop
     from app.models.trip import Trip
+    from app.models.trip_update import TripUpdate
     from app.models.vehicle_observation import VehicleObservation
     from app.models.vehicle_position import VehiclePosition
 
@@ -96,6 +97,11 @@ class TransitFeed(Base):
         passive_deletes=True,
     )
     vehicle_observations: Mapped[list["VehicleObservation"]] = relationship(
+        back_populates="feed",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    trip_updates: Mapped[list["TripUpdate"]] = relationship(
         back_populates="feed",
         cascade="all, delete-orphan",
         passive_deletes=True,

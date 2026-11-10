@@ -81,6 +81,13 @@ describe("formatters", () => {
       expect(info.description).toContain("real-time vehicle telemetry");
     });
 
+    it("formats TRIP_UPDATE badge", () => {
+      const info = formatPredictionSource("TRIP_UPDATE");
+      expect(info.label).toBe("Live TripUpdate");
+      expect(info.badgeClass).toContain("text-emerald-300");
+      expect(info.description).toContain("GTFS-Realtime trip update");
+    });
+
     it("formats SCHEDULE_ONLY badge", () => {
       const info = formatPredictionSource("SCHEDULE_ONLY");
       expect(info.label).toBe("Schedule");

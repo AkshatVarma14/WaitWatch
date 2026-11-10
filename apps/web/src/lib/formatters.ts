@@ -107,6 +107,14 @@ export function formatPredictionSource(source: string): PredictionSourceInfo {
         description:
           "Estimated using real-time vehicle telemetry and historical stop delay analysis.",
       };
+    case "TRIP_UPDATE":
+      return {
+        label: "Live TripUpdate",
+        badgeClass:
+          "bg-emerald-900/60 text-emerald-300 border border-emerald-700/60",
+        description:
+          "Estimated using official GTFS-Realtime trip update telemetry.",
+      };
     case "SCHEDULE_ONLY":
       return {
         label: "Schedule",

@@ -174,7 +174,10 @@ class StopArrivalPrediction(BaseModel):
     )
     prediction_source: str = Field(
         ...,
-        description="Source of prediction ('SCHEDULE_ONLY' or 'HISTORY_ADJUSTED')",
+        description=(
+            "Source of prediction ('SCHEDULE_ONLY', "
+            "'HISTORY_ADJUSTED', or 'TRIP_UPDATE')"
+        ),
     )
     source_observation_time: datetime | None = Field(
         None,

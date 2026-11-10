@@ -39,7 +39,11 @@ export interface StopSummary {
   timezone: string | null;
 }
 
-export type PredictionSource = "HISTORY_ADJUSTED" | "SCHEDULE_ONLY" | string;
+export type PredictionSource =
+  | "HISTORY_ADJUSTED"
+  | "SCHEDULE_ONLY"
+  | "TRIP_UPDATE"
+  | string;
 
 export interface StopArrivalPrediction {
   feed_slug: string;
