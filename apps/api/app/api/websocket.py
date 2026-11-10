@@ -51,6 +51,22 @@ async def feed_live_updates_ws(
         await websocket.close(code=1008, reason="Feed not found")
         return
 
+    if feed.feed_status != "active":
+        logger.warning(
+            "Rejecting WebSocket connection: feed '%s' is not active (status: %s)",
+            clean_slug,
+            feed.feed_status,
+        )
+        await websocket.accept()
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": f"Feed '{clean_slug}' is not active",
+            }
+        )
+        await websocket.close(code=1008, reason="Feed is not active")
+        return
+
     # Accept connection and register with connection manager
     await websocket.accept()
     accepted = await ws_manager.connect(feed.slug, websocket)

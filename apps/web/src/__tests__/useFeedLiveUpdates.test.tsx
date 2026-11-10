@@ -240,4 +240,40 @@ describe("useFeedLiveUpdates hook", () => {
     // Should NOT have attempted reconnect
     expect(MockWebSocket.instances.length).toBe(1);
   });
+
+  it("ignores duplicate feed update events and invalidates queries only once", () => {
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    renderHook(() => useFeedLiveUpdates("metro-city"), {
+      wrapper: createWrapper(),
+    });
+
+    const ws = MockWebSocket.instances[0]!;
+    act(() => {
+      ws.triggerOpen();
+    });
+
+    const event = {
+      type: "feed_update",
+      event_id: "evt-test-12345",
+      feed_id: 1,
+      feed_slug: "metro-city",
+      update_type: "vehicles",
+      timestamp: "2026-11-10T12:00:00Z",
+      vehicle_count: 5,
+    };
+
+    act(() => {
+      ws.triggerMessage(event);
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+
+    // Resend identical event payload (e.g. duplicate notification from listener)
+    act(() => {
+      ws.triggerMessage(event);
+    });
+
+    // Should NOT have triggered invalidation again
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+  });
 });

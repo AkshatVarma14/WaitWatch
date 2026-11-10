@@ -1,6 +1,7 @@
 """WaitWatch API — Real-time feed update events and pub/sub utilities."""
 
 import logging
+import uuid
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,6 +22,10 @@ class FeedUpdateEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     type: Literal["feed_update"] = "feed_update"
+    event_id: str = Field(
+        default_factory=lambda: uuid.uuid4().hex,
+        description="Globally unique identifier for this update event",
+    )
     feed_id: int = Field(..., description="Internal database ID of the feed")
     feed_slug: str = Field(..., description="Unique slug of the transit feed")
     update_type: Literal["vehicles", "trip_updates", "all"] = Field(

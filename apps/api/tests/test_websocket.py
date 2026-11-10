@@ -116,6 +116,38 @@ async def test_websocket_unknown_feed_rejected(ws_test_db):
 
 
 @pytest.mark.asyncio
+async def test_websocket_inactive_feed_rejected(ws_test_db):
+    """Test that connecting to an inactive feed is safely rejected with code 1008."""
+    session_maker = ws_test_db
+    async with session_maker() as session:
+        inactive_feed = TransitFeed(
+            city_name="Suburban Rail",
+            slug="suburban-rail",
+            static_gtfs_url="https://example.com/suburban.zip",
+            feed_status="inactive",
+            is_live_tracking_enabled=False,
+        )
+        session.add(inactive_feed)
+        await session.commit()
+
+    mock_ws = MockEndpointWebSocket()
+    async with session_maker() as session:
+        await feed_live_updates_ws(
+            websocket=mock_ws,  # type: ignore[arg-type]
+            feed_slug="suburban-rail",
+            session=session,
+        )
+
+    assert mock_ws.accepted is True
+    assert len(mock_ws.sent_json) == 1
+    assert mock_ws.sent_json[0]["type"] == "error"
+    assert "not active" in mock_ws.sent_json[0]["message"].lower()
+    assert mock_ws.closed is True
+    assert mock_ws.close_code == 1008
+    assert mock_ws.close_reason == "Feed is not active"
+
+
+@pytest.mark.asyncio
 async def test_websocket_valid_feed_connected_and_ping(ws_test_db):
     """Test connecting to a valid feed receives connected message and pong on ping."""
     session_maker = ws_test_db
@@ -223,6 +255,60 @@ async def test_websocket_capacity_limit():
     # Third connection should exceed limit
     assert await manager.connect("metro-city", ws3) is False
     assert manager.active_connection_count("metro-city") == 2
+
+
+@pytest.mark.asyncio
+async def test_websocket_event_deduplication():
+    """Verify duplicate events (e.g. pg_notify + dispatch) broadcast only once."""
+    manager = ConnectionManager()
+
+    class MockWebSocket:
+        def __init__(self):
+            from starlette.websockets import WebSocketState
+
+            self.client_state = WebSocketState.CONNECTED
+            self.sent_messages: list[dict] = []
+
+        async def send_json(self, data: dict):
+            self.sent_messages.append(data)
+
+    mock_client = MockWebSocket()
+    await manager.connect("metro-city", mock_client)
+
+    event = FeedUpdateEvent(
+        feed_id=1,
+        feed_slug="metro-city",
+        update_type="vehicles",
+        timestamp=datetime.now(UTC).isoformat(),
+        vehicle_count=7,
+    )
+    payload = event.model_dump_json()
+
+    # First dispatch (e.g. local in-process dispatch)
+    delivered_first = await manager.handle_db_notification(payload)
+    assert delivered_first == 1
+    assert len(mock_client.sent_messages) == 1
+    assert mock_client.sent_messages[0]["event_id"] == event.event_id
+
+    # Duplicate arrival (e.g. postgres LISTEN/NOTIFY callback)
+    delivered_second = await manager.handle_db_notification(payload)
+    assert delivered_second == 0
+    # Client must still only have received 1 message total
+    assert len(mock_client.sent_messages) == 1
+
+    # Different event should deliver cleanly
+    different_event = FeedUpdateEvent(
+        feed_id=1,
+        feed_slug="metro-city",
+        update_type="trip_updates",
+        timestamp=datetime.now(UTC).isoformat(),
+        trip_update_count=3,
+    )
+    delivered_third = await manager.handle_db_notification(
+        different_event.model_dump_json()
+    )
+    assert delivered_third == 1
+    assert len(mock_client.sent_messages) == 2
 
 
 @pytest.mark.asyncio

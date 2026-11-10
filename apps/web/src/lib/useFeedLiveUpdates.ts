@@ -35,6 +35,7 @@ export function useFeedLiveUpdates(feedSlug: string | null) {
   );
   const retryCountRef = useRef<number>(0);
   const isCleanClosureRef = useRef<boolean>(false);
+  const lastProcessedEventRef = useRef<string | null>(null);
 
   useEffect(() => {
     // If no WebSocket support in environment, enter fallback mode
@@ -45,6 +46,7 @@ export function useFeedLiveUpdates(feedSlug: string | null) {
 
     // If no feed is selected, reset status to disconnected and clean up
     if (!feedSlug) {
+      lastProcessedEventRef.current = null;
       setLiveStatus("disconnected");
       if (socketRef.current) {
         isCleanClosureRef.current = true;
@@ -158,6 +160,14 @@ export function useFeedLiveUpdates(feedSlug: string | null) {
 
           if (parsed.type === "feed_update") {
             const feedUpdate = parsed as FeedUpdateEvent;
+            const eventKey =
+              feedUpdate.event_id ||
+              `${feedUpdate.feed_slug}:${feedUpdate.update_type}:${feedUpdate.timestamp}`;
+            if (lastProcessedEventRef.current === eventKey) {
+              return;
+            }
+            lastProcessedEventRef.current = eventKey;
+
             if (feedUpdate.feed_slug === feedSlug) {
               setLastLiveUpdateAt(feedUpdate.timestamp);
               void queryClient.invalidateQueries({

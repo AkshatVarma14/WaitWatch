@@ -227,13 +227,13 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - Safe, placeholder-only `.env.example` template without usable default credentials, accompanied by clear startup and security guidance.
   - Comprehensive test suite: 83 Vitest frontend tests across 6 files, and 138 Pytest backend tests across 10 files.
 - **Stage 4, Slice 4.6**: Core WebSocket Live Updates:
-  - Feed-scoped FastAPI WebSocket endpoint (`/api/v1/feeds/{feed_slug}/ws`) with feed validation, policy violation rejection (code 1008) for unknown feeds, and ping/pong heartbeats.
-  - Zero-broker PostgreSQL `LISTEN/NOTIFY` pub/sub on channel `waitwatch_feed_updates` broadcasting lightweight `FeedUpdateEvent` payloads on snapshot commit; rollback or failed transactions publish zero events.
-  - Managed async database listener (`run_db_listener`) with single dedicated connection, exponential reconnection backoff, and graceful shutdown; thread-safe `ConnectionManager` with feed isolation and dead connection pruning.
+  - Feed-scoped FastAPI WebSocket endpoint (`/api/v1/feeds/{feed_slug}/ws`) with feed validation, policy violation rejection (code 1008) for unknown or inactive feeds, and ping/pong heartbeats.
+  - Zero-broker PostgreSQL `LISTEN/NOTIFY` pub/sub on channel `waitwatch_feed_updates` broadcasting lightweight `FeedUpdateEvent` payloads with UUID `event_id` on snapshot commit; rollback or failed transactions publish zero events.
+  - Managed async database listener (`run_db_listener`) with single dedicated connection, exponential reconnection backoff, and graceful shutdown; thread-safe `ConnectionManager` with feed isolation, LRU event deduplication, and dead connection pruning.
   - React live update hook (`useFeedLiveUpdates`) with TanStack Query cache invalidation (`routeMap`, `arrivals`), active-tab visibility lifecycle management, exponential reconnect backoff, and seamless fallback to 30-second steady-state REST polling on disconnect, error, or hidden tabs (pauses redundant background polling while WebSocket is actively connected).
   - Accessible, responsive UI live status indicators (`● Live (WS)` vs `● Live (30s)` fallback vs `⏸ Paused` vs `⚠️ Stale`) across the dashboard, arrivals board, and interactive map view.
   - Protocol upgrade configuration in Vite development server proxy (`ws: true`) and Nginx reverse proxy (`map $http_upgrade $connection_upgrade` and `Upgrade`/`Connection` headers).
-  - Comprehensive test suite: 92 Vitest frontend tests across 7 files, and 147 Pytest backend tests across 11 files.
+  - Comprehensive test suite: 93 Vitest frontend tests across 7 files, and 149 Pytest backend tests across 11 files.
 
 ## License
 

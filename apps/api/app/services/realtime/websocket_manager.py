@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from typing import Any
 
 from fastapi import WebSocket
@@ -14,12 +15,34 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
-    """Manages active feed-scoped WebSocket connections and message fanout."""
+    """Manages active feed-scoped WebSocket connections, deduplication, and fanout."""
 
-    def __init__(self, max_connections_per_feed: int = 500) -> None:
+    def __init__(
+        self,
+        max_connections_per_feed: int = 500,
+        max_recent_events: int = 1000,
+    ) -> None:
         self._connections: dict[str, set[WebSocket]] = {}
         self._lock = asyncio.Lock()
         self._max_per_feed = max_connections_per_feed
+        self._recent_events: OrderedDict[str, float] = OrderedDict()
+        self._max_recent_events = max_recent_events
+
+    def _deduplicate_event(self, event_key: str) -> bool:
+        """Check if event_key was recently processed; if not, record it.
+
+        Returns True if duplicate (should be dropped), False if new (recorded).
+        Caller should hold self._lock.
+        """
+        if not event_key:
+            return False
+        now = asyncio.get_event_loop().time()
+        if event_key in self._recent_events:
+            return True
+        self._recent_events[event_key] = now
+        while len(self._recent_events) > self._max_recent_events:
+            self._recent_events.popitem(last=False)
+        return False
 
     async def connect(self, feed_slug: str, websocket: WebSocket) -> bool:
         """Register an accepted WebSocket connection under a feed slug.
@@ -91,17 +114,38 @@ class ConnectionManager:
 
         return delivered
 
-    async def handle_db_notification(self, payload: str) -> None:
-        """Handle raw JSON notification payload from database listener."""
+    async def handle_db_notification(self, payload: str) -> int:
+        """Handle raw JSON notification from database listener or local dispatch.
+
+        Guarantees that duplicate events (e.g. from both PostgreSQL NOTIFY and
+        in-process commit dispatch) are broadcast to clients only once.
+        Returns the number of clients to which the event was broadcast.
+        """
         try:
             data = json.loads(payload)
             event = FeedUpdateEvent.model_validate(data)
-            await self.broadcast_to_feed(event.feed_slug, event.model_dump())
+
+            dedup_key = (
+                event.event_id
+                or f"{event.feed_slug}:{event.update_type}:{event.timestamp}"
+            )
+
+            async with self._lock:
+                if self._deduplicate_event(dedup_key):
+                    logger.debug(
+                        "Dropping duplicate feed update event '%s' for feed '%s'",
+                        dedup_key,
+                        event.feed_slug,
+                    )
+                    return 0
+
+            return await self.broadcast_to_feed(event.feed_slug, event.model_dump())
         except Exception as exc:
             logger.warning(
                 "Discarding malformed or invalid database notification payload: %s",
                 exc,
             )
+            return 0
 
     async def close_all(
         self, code: int = 1001, reason: str = "Server shutting down"
@@ -112,6 +156,7 @@ class ConnectionManager:
                 ws for sockets in self._connections.values() for ws in sockets
             ]
             self._connections.clear()
+            self._recent_events.clear()
 
         for ws in all_sockets:
             try:
@@ -119,6 +164,10 @@ class ConnectionManager:
                     await ws.close(code=code, reason=reason)
             except Exception:
                 pass
+
+    def clear_recent_events(self) -> None:
+        """Clear recent event cache (primarily for unit tests)."""
+        self._recent_events.clear()
 
     def active_connection_count(self, feed_slug: str | None = None) -> int:
         """Return the current number of active connections."""

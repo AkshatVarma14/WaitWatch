@@ -130,6 +130,7 @@ export interface PaginatedResponse<T> {
 
 export interface FeedUpdateEvent {
   type: "feed_update";
+  event_id?: string;
   feed_id: number;
   feed_slug: string;
   update_type: "vehicles" | "trip_updates" | "all";

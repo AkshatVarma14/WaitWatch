@@ -936,3 +936,49 @@ Implemented the real-time WebSocket live updates architecture, closing the docum
   - Multi-city production hosting and managed cloud deployment are not yet configured.
 - **Next Roadmap Step**:
   - Core project objectives (Stages 0–4 including WebSocket live updates) are fully satisfied and verified. Future scope may include turn-by-turn trip planning, user favorites, or cloud infrastructure.
+
+### 2026-11-10 — Stage 4, Slice 4.6: Independent Audit & Quality Polish
+
+#### Overview
+Conducted an independent code review and correctness audit of the Stage 4.6 WebSocket live updates implementation. Confirmed and resolved two specific edge cases: enforcing inactive-feed rejection against `TransitFeed.feed_status`, and implementing event deduplication to ensure exactly-once client broadcast across PostgreSQL `LISTEN/NOTIFY` and in-process commit dispatches. Re-verified secret omission in logs and payloads, rollback atomicity, feed fanout isolation, client reconnect backoff, and reverse proxy upgrade configurations.
+
+#### Key Findings & Corrections
+1. **Inactive Feed Rejection** (`apps/api/app/api/websocket.py`):
+   - Audited the `TransitFeed` model (`feed_status: Mapped[str]` with `"active"`, `"inactive"`, `"maintenance"`, `"error"` values).
+   - The initial WebSocket endpoint verified feed existence but did not check `feed_status`.
+   - Updated `feed_live_updates_ws` to reject inactive feeds (`feed.feed_status != "active"`) with code 1008 ("Feed is not active") and descriptive error JSON payload, stopping client reconnect loops cleanly.
+   - Added Pytest unit test `test_websocket_inactive_feed_rejected` in `apps/api/tests/test_websocket.py`.
+2. **Duplicate Event Deduplication & Idempotent Broadcast** (`events.py`, `websocket_manager.py`, `useFeedLiveUpdates.ts`):
+   - Audited the event publication flow: when ingestion runs within the API process on PostgreSQL, `publish_feed_update` stages `pg_notify` and `session.commit()` triggers PostgreSQL NOTIFY to `run_db_listener`, while the caller also invokes `dispatch_pending_feed_events`.
+   - Added a unique `event_id: str` (UUID4 hex) to `FeedUpdateEvent` schema (`events.py` and `transit.ts`).
+   - Implemented thread-safe in-memory LRU deduplication in `ConnectionManager` (`apps/api/app/services/realtime/websocket_manager.py`). If an event with the same `event_id` (or fallback key) was already broadcast in the recent cache window (1,000 entries), duplicate arrivals from PostgreSQL NOTIFY or local dispatch are dropped cleanly.
+   - Added client-side defense-in-depth deduplication in `useFeedLiveUpdates.ts` via `lastProcessedEventRef` to ignore duplicate frames and avoid redundant TanStack Query cache invalidations.
+   - Added Pytest unit test `test_websocket_event_deduplication` and Vitest unit test in `useFeedLiveUpdates.test.tsx`.
+3. **Rollback & Error Isolation Audit**:
+   - Confirmed `clear_pending_feed_events` clears staged events on transaction failure or rollback in both vehicle position and trip update ingestion services.
+   - Confirmed zero credentials, transit API keys, private URLs, or raw protobuf/JSON feed payloads exist in `FeedUpdateEvent` models, WebSocket frames, or server logs.
+4. **Fanout & Proxy Verification**:
+   - Re-verified strict feed isolation in `ConnectionManager._connections` and dead connection cleanup.
+   - Re-verified Vite dev proxy (`ws: true`) and Nginx reverse proxy configuration (`map $http_upgrade $connection_upgrade` with `Upgrade`/`Connection` headers).
+
+#### Verification Evidence
+- **Backend Pytest**: 149 passed in 11.54s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint or formatting errors (`py -3.12 -m ruff check .; py -3.12 -m ruff format --check .`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall app tests`).
+- **Frontend Vitest**: 93 passed across 7 test suites in 4.97s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite in 2.40s (`npm.cmd run build`).
+- **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
+- **Secret Scan**: Clean, zero secrets detected.
+
+#### Changed / Added Files
+- `apps/api/app/api/websocket.py` (enforced inactive feed rejection with code 1008)
+- `apps/api/app/services/realtime/events.py` (added `event_id` field with UUID4 default)
+- `apps/api/app/services/realtime/websocket_manager.py` (added thread-safe LRU event deduplication)
+- `apps/api/tests/test_websocket.py` (added tests for inactive feed rejection and event deduplication)
+- `apps/web/src/types/transit.ts` (added `event_id` to `FeedUpdateEvent`)
+- `apps/web/src/lib/useFeedLiveUpdates.ts` (added client-side event deduplication)
+- `apps/web/src/__tests__/useFeedLiveUpdates.test.tsx` (added client-side deduplication test)
+- `README.md` (updated feature summary and test counts)
+- `docs/architecture/overview.md` (documented inactive feed rejection and event deduplication)
+- `docs/development-ledger.md` (this audit entry)
