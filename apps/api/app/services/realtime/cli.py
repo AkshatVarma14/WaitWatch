@@ -1,0 +1,99 @@
+"""Administrative command-line interface for GTFS-Realtime vehicle position polling."""
+
+import argparse
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+from sqlalchemy import select
+
+from app.database.session import async_session_factory
+from app.models.feed import TransitFeed
+from app.services.realtime.service import VehiclePositionIngestionService
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("realtime-cli")
+
+
+async def run_poll_vehicles(args: argparse.Namespace) -> int:
+    """Execute vehicle position polling from CLI arguments."""
+    async with async_session_factory() as session:
+        feed = None
+        if args.feed_id is not None:
+            stmt = select(TransitFeed).where(TransitFeed.id == args.feed_id)
+            result = await session.execute(stmt)
+            feed = result.scalar_one_or_none()
+        elif args.slug:
+            stmt = select(TransitFeed).where(TransitFeed.slug == args.slug)
+            result = await session.execute(stmt)
+            feed = result.scalar_one_or_none()
+        else:
+            logger.error("Must specify either --feed-id or --slug")
+            return 1
+
+        if not feed:
+            logger.error(
+                "Feed not found (feed_id=%s, slug=%s)", args.feed_id, args.slug
+            )
+            return 1
+
+        raw_bytes: bytes | None = None
+        if args.file:
+            path = Path(args.file)
+            if not path.is_file():
+                logger.error("Protobuf payload file not found: %s", path)
+                return 1
+            logger.info("Reading protobuf payload from file: %s", path)
+            raw_bytes = path.read_bytes()
+
+        service = VehiclePositionIngestionService()
+        try:
+            count = await service.ingest_for_feed(session, feed, raw_bytes=raw_bytes)
+            logger.info("=" * 60)
+            logger.info("GTFS-Realtime vehicle position poll successful!")
+            logger.info("  Feed:              %s (%s)", feed.city_name, feed.slug)
+            logger.info("  Vehicles Ingested: %d", count)
+            logger.info("  Last Poll At:      %s", feed.last_realtime_poll_at)
+            logger.info("=" * 60)
+            return 0
+        except Exception as exc:
+            logger.error("Vehicle position poll failed: %s", exc)
+            return 1
+
+
+def main() -> None:
+    """CLI entrypoint."""
+    parser = argparse.ArgumentParser(
+        prog="realtime-cli",
+        description="WaitWatch GTFS-Realtime Vehicle Positions CLI",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    poll_parser = subparsers.add_parser(
+        "poll-vehicles",
+        help="Poll or ingest vehicle positions for a feed",
+    )
+    poll_parser.add_argument("--feed-id", type=int, help="Internal transit feed ID")
+    poll_parser.add_argument("--slug", type=str, help="Feed slug / city identifier")
+    poll_parser.add_argument(
+        "--file",
+        type=str,
+        help="Optional path to local serialized protobuf FeedMessage file",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "poll-vehicles":
+        exit_code = asyncio.run(run_poll_vehicles(args))
+        sys.exit(exit_code)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

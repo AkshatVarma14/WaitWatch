@@ -219,4 +219,94 @@ This document tracks verified stage milestones, implementation slices, verificat
 - `docs/development-ledger.md` (this ledger)
 
 #### Next Authorized Step
-- **Stage 1 Conclusion / Stage 2 Preparation**: Await authorization for the next stage or slice in accordance with project instructions.
+- **Stage 2, Slice 2.1**: GTFS-Realtime Vehicle-Position Ingestion (Completed below).
+
+---
+
+## Stage 2: GTFS-Realtime Integration
+
+### Slice 2.1: GTFS-Realtime Vehicle-Position Ingestion (Completed & Verified)
+
+- **Date**: 2026-11-10
+- **Goal**: Implement GTFS-Realtime vehicle-position ingestion using official MobilityData Protocol Buffer bindings (`gtfs_realtime_pb2.FeedMessage`), FeedHeader incrementality validation with explicit `DIFFERENTIAL` mode rejection, coordinate and entity validation, current-state snapshot database persistence with spatial GiST indexing, transactional rollback preservation of previous snapshots, administrative CLI, and comprehensive test suite.
+
+#### Implemented Components
+1. **Database Model & Migration** (`apps/api/app/models/vehicle_position.py`, `apps/api/alembic/versions/0003_vehicle_positions.py`):
+   - `VehiclePosition` model with feed foreign key (`transit_feeds.id`, cascade delete).
+   - Source strings for GTFS identifiers (`trip_id`, `route_id`, `stop_id`) ensuring partial or unscheduled telemetry is accepted without foreign key constraints.
+   - Vehicle descriptors (`vehicle_id`, `vehicle_label`, `license_plate`).
+   - Movement telemetry (`latitude`, `longitude`, `bearing`, `speed`, `odometer`).
+   - PostGIS geography column (`point = Geography(geometry_type="POINT", srid=4326)`) with GiST spatial index.
+   - Distinct timestamps: `feed_timestamp` (from `FeedHeader.timestamp`), `vehicle_timestamp` (from `VehiclePosition.timestamp`), and server receipt time `recorded_at`.
+   - Forward migration `0003_vehicle_positions` generating clean upgrade and downgrade DDL.
+2. **Official Protocol Buffer Parser & Validator** (`apps/api/app/services/realtime/parser.py`):
+   - Decodes protobuf messages using official `gtfs_realtime_pb2.FeedMessage`.
+   - Validates `FeedHeader` presence, version string, and plausible timestamps.
+   - Enforces `FULL_DATASET` incrementality; explicitly rejects `DIFFERENTIAL` incrementality with `UnsupportedIncrementalityError`.
+   - Entity validation: rejects blank or duplicate entity IDs.
+   - Strict coordinates validation: non-finite check and WGS84 bounds `[-90.0, 90.0]` / `[-180.0, 180.0]`.
+   - Validates kinematic fields: bearing `[0.0, 360.0]`, non-negative speed and odometer.
+   - Skips non-vehicle entities (trip updates, alerts) and deleted entities cleanly.
+3. **Resilient HTTP Downloader** (`apps/api/app/services/realtime/downloader.py`):
+   - Streaming HTTP client (`httpx.AsyncClient`) with finite connect/read timeouts (default 20s) and bounded size limits (default 50MB).
+   - Automatic credential masking in log messages and URLs via `mask_url_credentials`.
+   - Dynamic API key header resolution from `TransitFeed.api_key_env_var` reference.
+4. **Current-State Snapshot Ingestion Service** (`apps/api/app/services/realtime/service.py`):
+   - `VehiclePositionIngestionService`: Atomically replaces existing vehicle positions for the target `feed_id`.
+   - Atomic rollback: preserves previous snapshot on any download, parsing, validation, or database failure.
+   - Updates `TransitFeed.last_realtime_poll_at` only after successful database commit.
+5. **Administrative CLI** (`apps/api/app/services/realtime/cli.py`):
+   - Command: `python -m app.services.realtime.cli poll-vehicles --feed-id <ID> | --slug <SLUG> [--file <PATH>]`.
+   - Operator execution without exposing unauthenticated public endpoints.
+6. **Comprehensive Realtime Test Suite** (`apps/api/tests/test_realtime_ingestion.py`):
+   - 26 unit and integration tests covering:
+     - Fully-populated and minimal vehicle positions.
+     - Multiple vehicles and absent optional descriptors.
+     - Ignored non-vehicle entities and deleted records.
+     - Empty, corrupted, and missing-header payloads.
+     - Explicit rejection of `DIFFERENTIAL` mode.
+     - Duplicate entity IDs, blank IDs, missing positions.
+     - Out-of-bounds coordinates (lat, lon, NaN, inf) and invalid bearings/speeds.
+     - Downloader credential masking, timeouts, and size limit enforcement.
+     - Atomic snapshot replacement and rollback preservation of prior snapshots.
+     - Administrative CLI arguments and local file ingestion.
+
+#### Verification Evidence
+- **Pytest**: 86 tests passed in 8.99s (`py -3.12 -m pytest tests -v`).
+- **Ruff**: Zero lint errors and clean formatting across `app/`, `tests/`, and `alembic/` (49 files checked).
+- **Python Compilation**: All backend modules compile cleanly (`py -3.12 -m compileall app tests alembic`).
+- **Alembic Offline Validation**:
+  - `alembic upgrade head --sql` passed and generated clean DDL.
+  - `alembic downgrade 0003_vehicle_positions:0002_optional_agency_id --sql` passed and generated clean drop DDL.
+- **Frontend Regression**:
+  - `npm.cmd test -- --run`: 2 test files, 6 tests passed in 3.36s.
+  - `npm.cmd run build`: production build passed in 2.29s without errors.
+
+#### Changed / Added Files
+- `apps/api/pyproject.toml` (added `gtfs-realtime-bindings>=3.0.0` and `protobuf>=5.0.0`)
+- `apps/api/app/models/vehicle_position.py` (new `VehiclePosition` snapshot model)
+- `apps/api/app/models/feed.py` (added `vehicle_positions` relationship)
+- `apps/api/app/models/__init__.py` (exported `VehiclePosition`)
+- `apps/api/alembic/versions/0003_vehicle_positions.py` (new forward migration)
+- `apps/api/app/services/realtime/__init__.py` (realtime package exports)
+- `apps/api/app/services/realtime/exceptions.py` (realtime exception hierarchy)
+- `apps/api/app/services/realtime/downloader.py` (safe HTTP downloader)
+- `apps/api/app/services/realtime/parser.py` (protobuf decoder and validator)
+- `apps/api/app/services/realtime/service.py` (snapshot ingestion service)
+- `apps/api/app/services/realtime/cli.py` (administrative CLI)
+- `apps/api/tests/test_alembic.py` (updated migration head verification to 0003)
+- `apps/api/tests/test_models.py` (added vehicle position model structure test)
+- `apps/api/tests/test_realtime_ingestion.py` (26 new comprehensive tests)
+- `docs/database/database-design.md` (documented `vehicle_positions` table, migration 0003, and snapshot strategy)
+- `docs/architecture/overview.md` (updated GTFS-Realtime service status to Partial)
+- `README.md` (updated development status and milestones)
+- `docs/development-ledger.md` (this ledger)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - GTFS-Realtime `DIFFERENTIAL` incrementality is unsupported by design; only `FULL_DATASET` is accepted.
+  - GTFS-Realtime trip updates and alerts are not yet stored (scheduled for future slices).
+  - Background polling daemon / cron scheduler is not yet active (manual/CLI triggering only).
+  - Live vehicle positions are stored in the database snapshot table but not yet broadcast over WebSockets or rendered on the frontend map.
+- **Next Authorized Step**:
+  - **Stage 2, Slice 2.2**: GTFS-Realtime Trip Updates & Delay Ingestion (or Vehicle Position WebSocket Broadcast depending on roadmap prioritization).

@@ -218,6 +218,47 @@ Stores specific calendar exceptions from GTFS `calendar_dates.txt`.
 
 ---
 
+### 2.9 `vehicle_positions`
+Stores the current vehicle position snapshot for each feed, parsed from GTFS-Realtime Protocol Buffer messages.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
+| `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
+| `entity_id` | `VARCHAR(255)` | NOT NULL | FeedEntity identifier from GTFS-Realtime |
+| `vehicle_id` | `VARCHAR(255)` | NULLABLE | VehicleDescriptor.id |
+| `vehicle_label` | `VARCHAR(255)` | NULLABLE | VehicleDescriptor.label |
+| `license_plate` | `VARCHAR(255)` | NULLABLE | VehicleDescriptor.license_plate |
+| `trip_id` | `VARCHAR(255)` | NULLABLE | TripDescriptor.trip_id (source string, loosely coupled) |
+| `route_id` | `VARCHAR(255)` | NULLABLE | TripDescriptor.route_id (source string) |
+| `direction_id` | `INTEGER` | NULLABLE | Trip direction index |
+| `start_time` | `VARCHAR(10)` | NULLABLE | Trip scheduled start time |
+| `start_date` | `VARCHAR(10)` | NULLABLE | Trip scheduled start date |
+| `schedule_relationship` | `INTEGER` | NULLABLE | Trip schedule relationship enum |
+| `stop_id` | `VARCHAR(255)` | NULLABLE | Current / upcoming stop identifier |
+| `current_stop_sequence` | `INTEGER` | NULLABLE | Stop sequence index along trip |
+| `current_status` | `INTEGER` | NULLABLE | 0=INCOMING_AT, 1=STOPPED_AT, 2=IN_TRANSIT_TO |
+| `latitude` | `FLOAT` | NOT NULL | WGS84 latitude coordinate |
+| `longitude` | `FLOAT` | NOT NULL | WGS84 longitude coordinate |
+| `point` | `geography(POINT, 4326)` | NULLABLE | PostGIS Point geometry with GiST index |
+| `bearing` | `FLOAT` | NULLABLE | Degrees clockwise from North [0.0, 360.0] |
+| `odometer` | `FLOAT` | NULLABLE | Distance traveled in meters |
+| `speed` | `FLOAT` | NULLABLE | Momentary speed in meters/second |
+| `congestion_level` | `INTEGER` | NULLABLE | Congestion level enum |
+| `occupancy_status` | `INTEGER` | NULLABLE | Occupancy status enum |
+| `occupancy_percentage` | `INTEGER` | NULLABLE | Occupancy ratio percentage |
+| `feed_timestamp` | `TIMESTAMP WITH TZ` | NULLABLE | FeedHeader timestamp from protobuf |
+| `vehicle_timestamp` | `TIMESTAMP WITH TZ` | NULLABLE | VehiclePosition timestamp from protobuf |
+| `recorded_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Receipt time on local server |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, entity_id)`
+- `INDEX (feed_id, route_id)`
+- `INDEX (feed_id, vehicle_id)`
+- `INDEX (point)` using GiST
+
+---
+
 ## 3. Geospatial Design & PostGIS Extension
 
 PostGIS extension is explicitly configured in migration `0001_initial_transit_models`:
@@ -225,11 +266,11 @@ PostGIS extension is explicitly configured in migration `0001_initial_transit_mo
 CREATE EXTENSION IF NOT EXISTS postgis;
 ```
 
-The `stops` table contains both:
+Both the `stops` and `vehicle_positions` tables contain:
 1. `latitude` and `longitude` numeric floats for immediate, dialect-agnostic coordinate display.
 2. `point` (`geography(POINT, 4326)`) with a GiST index for spatial queries such as:
    - Proximity search: `ST_DWithin(point, ST_MakePoint(lon, lat)::geography, radius_meters)`
-   - Nearest stop: `ORDER BY point <-> ST_MakePoint(lon, lat)::geography LIMIT 5`
+   - Nearest vehicle / stop: `ORDER BY point <-> ST_MakePoint(lon, lat)::geography LIMIT 5`
 
 For local unit testing without PostGIS/SpatiaLite, a fallback compilation rule compiles `Geography` to `BLOB` in SQLite, allowing in-memory integration testing without requiring local database servers.
 
@@ -238,12 +279,13 @@ For local unit testing without PostGIS/SpatiaLite, a fallback compilation rule c
 ## 4. Alembic Migration Structure
 
 - **Revisions**:
-  - `0001_initial_transit_models`: Initial schema creation for all 8 transit tables with PostGIS extension.
+  - `0001_initial_transit_models`: Initial schema creation for all 8 static transit tables with PostGIS extension.
   - `0002_optional_agency_id`: Alter `agencies.agency_id` to `nullable=True` to support valid single-agency GTFS Schedule feeds per specification.
+  - `0003_vehicle_positions`: Create `vehicle_positions` current snapshot table with spatial GiST index and feed scoping.
 - **Offline Generation**:
   ```bash
   alembic upgrade head --sql
-  alembic downgrade 0002_optional_agency_id:0001_initial_transit_models --sql
+  alembic downgrade 0003_vehicle_positions:0002_optional_agency_id --sql
   ```
 - **Live Upgrade**:
   ```bash
@@ -266,3 +308,20 @@ The static ingestion pipeline (`GTFSIngestionService`) is designed with strict t
 4. **All-or-Nothing Transactions**:
    - Entire process runs within a single database transaction.
    - Any validation error, foreign key violation, or unexpected exception triggers an immediate session rollback, leaving any prior feed data completely intact.
+
+---
+
+## 6. GTFS-Realtime Snapshot Persistence Strategy
+
+The realtime vehicle position ingestion pipeline (`VehiclePositionIngestionService`):
+
+1. **Current-State Snapshot Design**:
+   - `vehicle_positions` maintains only the latest snapshot of active vehicles for each feed.
+   - Historical tracking or vehicle breadcrumbs are deliberately decoupled from this snapshot table.
+2. **Atomic Full Replacement**:
+   - For valid `FULL_DATASET` feeds, replaces all current records for that `feed_id` inside an atomic transaction.
+   - On parse, coordinate, or persistence failure, immediately rolls back, preserving the previous valid snapshot in full.
+3. **Explicit DIFFERENTIAL Rejection**:
+   - GTFS-Realtime `DIFFERENTIAL` incrementality is unsupported by design for this consumer; rejected with `UnsupportedIncrementalityError` without modifying database state.
+4. **Operational Timestamp Tracking**:
+   - `TransitFeed.last_realtime_poll_at` is updated only upon successful transaction commit.

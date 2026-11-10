@@ -15,10 +15,10 @@ def test_alembic_config_resolves() -> None:
     alembic_cfg = Config(str(ini_path))
     script = ScriptDirectory.from_config(alembic_cfg)
 
-    # Verify head migration is 0002_optional_agency_id
+    # Verify head migration is 0003_vehicle_positions
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "0002_optional_agency_id"
+    assert heads[0] == "0003_vehicle_positions"
 
     # Verify initial migration
     rev_0001 = script.get_revision("0001_initial_transit_models")
@@ -30,6 +30,12 @@ def test_alembic_config_resolves() -> None:
     rev_0002 = script.get_revision("0002_optional_agency_id")
     assert rev_0002 is not None
     assert rev_0002.down_revision == "0001_initial_transit_models"
+
+    # Verify forward migration 0003
+    rev_0003 = script.get_revision("0003_vehicle_positions")
+    assert rev_0003 is not None
+    assert rev_0003.down_revision == "0002_optional_agency_id"
+    assert "vehicle_positions" in (rev_0003.doc or "").lower()
 
 
 def test_migration_environment_settings_integration() -> None:

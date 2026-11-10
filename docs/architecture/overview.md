@@ -94,9 +94,25 @@ Orchestrates downloading, inspecting, parsing, and persisting GTFS Schedule feed
 - **Administrative CLI** (`cli.py`): CLI interface (`python -m app.services.gtfs.cli ingest --feed-id <ID>`) for operators and background jobs without exposing unauthenticated public endpoints.
 - **Forward Migration**: `0002_optional_agency_id` allowing `agency_id` to be nullable for standard single-agency feeds.
 
-### 2. GTFS-Realtime Service — `Planned`
+### 2. GTFS-Realtime Service — `Partial (Slice 2.1 Vehicle Positions Implemented)`
 
-Polls GTFS-Realtime feeds at regular intervals (e.g., every 15–30 seconds) for vehicle position updates and trip update messages. Parses the Protocol Buffer responses and stores current vehicle positions in the database. Triggers WebSocket broadcasts to connected clients.
+Polls and parses GTFS-Realtime Protocol Buffer feeds:
+- **Vehicle Position Ingestion (`services/realtime/`)**:
+  - Official MobilityData GTFS-Realtime Protocol Buffer decoding (`gtfs_realtime_pb2.FeedMessage`).
+  - Strict FeedHeader validation: enforces `FULL_DATASET` mode and explicitly rejects `DIFFERENTIAL` mode with sanitized error.
+  - Entity validation: duplicate entity ID rejection, mandatory position data check, finite WGS84 coordinate bounds (`[-90, 90]`, `[-180, 180]`), bearing `[0, 360]`, non-negative speed and odometer.
+  - Distinction preserved between `FeedHeader.timestamp` and `VehiclePosition.timestamp`.
+  - Loosely coupled source strings for `trip_id`, `route_id`, and `stop_id` ensuring partial or unscheduled vehicle telemetry is never rejected.
+  - Current-state snapshot persistence: replaces only the target feed's vehicles atomically; rolls back and preserves the prior snapshot on any failure.
+  - Updates `TransitFeed.last_realtime_poll_at` upon successful commit.
+  - Administrative CLI: `python -m app.services.realtime.cli poll-vehicles --feed-id <ID> | --slug <SLUG> [--file <PATH>]`.
+  - Streaming HTTP downloader with timeout, payload size bounds (50MB), and URL credential masking.
+- **Forward Migration**: `0003_vehicle_positions` creating table with spatial GiST index on `point`.
+- **Planned Remaining Stage 2 Work**:
+  - GTFS-Realtime TripUpdates ingestion (delays, arrival/departure estimates)
+  - GTFS-Realtime ServiceAlerts ingestion
+  - Background polling scheduler
+  - WebSocket broadcaster for live position streaming
 
 ### 3. ETA Prediction Service — `Planned`
 
