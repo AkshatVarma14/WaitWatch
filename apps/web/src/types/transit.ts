@@ -145,3 +145,46 @@ export type LiveConnectionStatus =
   | "disconnected"
   | "fallback"
   | "paused";
+
+export interface StopPlanDetail {
+  stop_id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  stop_sequence: number;
+  scheduled_time: string;
+  estimated_time: string;
+  delay_seconds: number | null;
+}
+
+export type TripPlanRealtimeStatus =
+  | "SCHEDULED"
+  | "REALTIME_ON_TIME"
+  | "REALTIME_DELAYED"
+  | "REALTIME_EARLY";
+
+export interface TripItinerary {
+  route_id: string;
+  route_short_name: string | null;
+  route_long_name: string | null;
+  route_color: string | null;
+  text_color: string | null;
+  route_type: number;
+  trip_id: string;
+  trip_headsign: string | null;
+  direction_id: number | null;
+  origin: StopPlanDetail;
+  destination: StopPlanDetail;
+  duration_minutes: number;
+  intermediate_stops_count: number;
+  realtime_status: TripPlanRealtimeStatus;
+}
+
+export interface TripPlanResponse {
+  feed_slug: string;
+  origin_stop_id: string;
+  destination_stop_id: string;
+  target_date: string;
+  target_time: string;
+  itineraries: TripItinerary[];
+}

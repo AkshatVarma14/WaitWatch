@@ -272,3 +272,85 @@ class RouteMapResponse(BaseModel):
         default_factory=list,
         description="Fresh active vehicles currently assigned to this route",
     )
+
+
+class StopPlanDetailResponse(BaseModel):
+    """Origin or destination stop timing and details for an itinerary."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    stop_id: str = Field(..., description="GTFS stop identifier")
+    name: str = Field(..., description="Stop or station name")
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="WGS84 latitude")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="WGS84 longitude")
+    stop_sequence: int = Field(..., ge=0, description="Stop sequence on trip")
+    scheduled_time: str = Field(..., description="Scheduled time in HH:MM:SS format")
+    estimated_time: str = Field(
+        ...,
+        description="Real-time adjusted or scheduled time in HH:MM:SS format",
+    )
+    delay_seconds: int | None = Field(
+        None, description="Delay in seconds if real-time update available"
+    )
+
+
+class TripItineraryResponse(BaseModel):
+    """A direct scheduled journey option between origin and destination."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    route_id: str = Field(..., description="GTFS route identifier")
+    route_short_name: str | None = Field(
+        None, description="Route short name (e.g. '10')"
+    )
+    route_long_name: str | None = Field(None, description="Route long name")
+    route_color: str | None = Field(None, description="Route display color hex")
+    text_color: str | None = Field(None, description="Route text display color hex")
+    route_type: int = Field(..., description="GTFS route type")
+    trip_id: str = Field(..., description="GTFS trip identifier")
+    trip_headsign: str | None = Field(
+        None, description="Passenger-facing trip headsign"
+    )
+    direction_id: int | None = Field(None, description="Direction of travel")
+
+    origin: StopPlanDetailResponse = Field(
+        ..., description="Origin stop details and departure time"
+    )
+    destination: StopPlanDetailResponse = Field(
+        ..., description="Destination stop details and arrival time"
+    )
+    duration_minutes: int = Field(
+        ..., ge=0, description="Estimated total trip duration in minutes"
+    )
+    intermediate_stops_count: int = Field(
+        ...,
+        ge=0,
+        description="Number of intermediate stops between origin and destination",
+    )
+    realtime_status: str = Field(
+        ...,
+        description=(
+            "Real-time delay status: SCHEDULED, REALTIME_ON_TIME, "
+            "REALTIME_DELAYED, REALTIME_EARLY"
+        ),
+    )
+
+
+class TripPlanResponse(BaseModel):
+    """Direct trip plan response containing itineraries between two stops."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    feed_slug: str = Field(..., description="Feed slug identifier")
+    origin_stop_id: str = Field(..., description="Origin GTFS stop identifier")
+    destination_stop_id: str = Field(
+        ..., description="Destination GTFS stop identifier"
+    )
+    target_date: str = Field(..., description="Target travel date in YYYY-MM-DD format")
+    target_time: str = Field(
+        ..., description="Target departure time in HH:MM:SS format"
+    )
+    itineraries: list[TripItineraryResponse] = Field(
+        default_factory=list,
+        description="Direct itineraries ordered by departure time",
+    )

@@ -17,6 +17,7 @@ WaitWatch aims to solve this by ingesting standardized GTFS and GTFS-Realtime da
 - ⏱️ **Real-time arrivals & ETA prediction** — Stop-level arrivals board combining scheduled stop times, GTFS-RT TripUpdates, and live vehicle positions with delay calculation.
 - ⚡ **Live WebSocket updates & pub/sub** — Instant UI refresh over feed-scoped WebSockets backed by PostgreSQL `LISTEN/NOTIFY`, with LRU deduplication and automatic fallback to 30-second steady-state REST polling.
 - 🔄 **GTFS & GTFS-Realtime ingestion** — Atomic ingestion pipelines for static GTFS archives (shapes, routes, stops, trips, calendar) and GTFS-RT vehicle positions and trip updates.
+- 🧭 **Direct stop-to-stop trip planner** — Fast, feed-aware direct journey finder between any two stops with active calendar evaluation, departure time filtering, GTFS-RT live delay enrichment, duration and intermediate stop counts, and interactive route map focus.
 - 🏙️ **Multi-feed configuration** — Database-backed feed registry for configuring independent transit feeds by city/agency with operational status management.
 
 ### Future Roadmap
@@ -187,6 +188,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 | Stage 2 | GTFS-Realtime integration | ✅ Complete (Slice 2.1 Complete) |
 | Stage 3 | Historical Observation & ETA Prediction | ✅ Complete (Slices 3.1 & 3.2 Complete) |
 | Stage 4 | UI polish and deployment | ✅ Complete (Slices 4.1–4.5 & Slice 4.6 Follow-Up Complete) |
+| Stage 5 | Direct Route Trip Planning & Polish | 🟡 In Progress (Slice 5.1 Complete) |
 
 ### Completed Milestones
 - **Stage 0**: Full foundation with React/TS/Tailwind frontend, FastAPI backend, CI workflows, and documentation.
@@ -241,6 +243,15 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - Accessible, responsive UI live status indicators (`● Live (WS)` vs `● Live (30s)` fallback vs `⏸ Paused` vs `⚠️ Stale`) across the dashboard, arrivals board, and interactive map view.
   - Protocol upgrade configuration in Vite development server proxy (`ws: true`) and Nginx reverse proxy (`map $http_upgrade $connection_upgrade` and `Upgrade`/`Connection` headers).
   - Comprehensive test suite: 93 Vitest frontend tests across 7 files, and 153 Pytest backend tests across 11 files.
+- **Stage 5, Slice 5.1**: Direct Route Stop-to-Stop Trip Planner:
+  - Feed-scoped trip planning API endpoint (`GET /api/v1/feeds/{feed_slug}/plan`) accepting `origin_stop_id`, `destination_stop_id`, optional `time` (`HH:MM:SS`), optional `date` (`YYYY-MM-DD`), and `limit`.
+  - ANSI SQL-compliant single-query direct trip discovery joining aliased `stop_times` on `trips` (`st_origin.stop_sequence < st_dest.stop_sequence`) with route and stop metadata.
+  - Active GTFS calendar and calendar exception evaluation resolving service availability for the target travel date.
+  - Departure time filtering supporting GTFS overnight/extended hours (`>24:00`).
+  - GTFS-Realtime `TripUpdate` delay enrichment associating delay seconds and adjusted estimated times with both origin departure and destination arrival, with delay status badges (`REALTIME_DELAYED`, `REALTIME_EARLY`, `REALTIME_ON_TIME`, `SCHEDULED`).
+  - Responsive, accessible React frontend component (`TripPlanner`) with stop selectors, swap button (`⇄`), departure time input, TanStack Query integration, itinerary cards with route color badges, duration, intermediate stop counts, and "View Route on Map" interaction.
+  - Clean tab navigation on Dashboard (`🚏 Stop Explorer & Arrivals` vs `🧭 Direct Trip Planner`).
+  - Comprehensive test suite: 104 Vitest frontend tests across 8 files, and 165 Pytest backend tests across 12 files.
 
 ## License
 

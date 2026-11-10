@@ -4,6 +4,7 @@ import logging
 import math
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from datetime import date as datetime_date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -12,17 +13,20 @@ from geoalchemy2.functions import ST_Distance, ST_DWithin, ST_MakePoint, ST_SetS
 from sqlalchemy import cast, func, or_, select
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from app.database.session import get_session
 from app.models import (
     Agency,
+    Calendar,
+    CalendarDate,
     Route,
     Shape,
     Stop,
     StopTime,
     TransitFeed,
     Trip,
+    TripUpdate,
     VehiclePosition,
 )
 from app.schemas.transit import (
@@ -41,7 +45,10 @@ from app.schemas.transit import (
     ShapePointResponse,
     StopArrivalPrediction,
     StopDetailResponse,
+    StopPlanDetailResponse,
     StopResponse,
+    TripItineraryResponse,
+    TripPlanResponse,
 )
 from app.services.prediction import ArrivalPredictionService
 
@@ -926,6 +933,374 @@ async def get_stop_arrivals(
         logger.warning(
             "Database unavailable in get_stop_arrivals: %s", type(exc).__name__
         )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service is temporarily unavailable",
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Trip Planning Endpoints (Stage 5, Slice 5.1)
+# ---------------------------------------------------------------------------
+
+
+def _time_str_to_seconds(t_str: str) -> int:
+    """Convert HH:MM or HH:MM:SS string to total seconds from start of service day."""
+    parts = t_str.strip().split(":")
+    if len(parts) == 3:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    if len(parts) == 2:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60
+    return 0
+
+
+def _seconds_to_time_str(total_seconds: int) -> str:
+    """Format total seconds to HH:MM:SS string (preserving GTFS hours >= 24)."""
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _add_delay_to_time(base_time_str: str, delay_seconds: int | None) -> str:
+    """Add delay in seconds to a base HH:MM:SS string."""
+    if delay_seconds is None or delay_seconds == 0:
+        return base_time_str
+    base_sec = _time_str_to_seconds(base_time_str)
+    return _seconds_to_time_str(max(0, base_sec + delay_seconds))
+
+
+async def _get_active_service_ids_for_date(
+    session: AsyncSession,
+    feed_id: int,
+    target_date: datetime_date,
+) -> set[str] | None:
+    """Return active service IDs for feed on date, or None if no calendar exists."""
+    has_cal = await session.execute(
+        select(Calendar.id).where(Calendar.feed_id == feed_id).limit(1)
+    )
+    has_cal_date = await session.execute(
+        select(CalendarDate.id).where(CalendarDate.feed_id == feed_id).limit(1)
+    )
+    if (
+        has_cal.scalar_one_or_none() is None
+        and has_cal_date.scalar_one_or_none() is None
+    ):
+        return None  # Unconfigured calendar: all trips treated as active
+
+    day_col_name = target_date.strftime("%A").lower()  # "monday", "tuesday", etc.
+    day_col = getattr(Calendar, day_col_name, None)
+
+    active_services: set[str] = set()
+    if day_col is not None:
+        cal_stmt = select(Calendar.service_id).where(
+            Calendar.feed_id == feed_id,
+            Calendar.start_date <= target_date,
+            Calendar.end_date >= target_date,
+            day_col.is_(True),
+        )
+        cal_res = await session.execute(cal_stmt)
+        active_services.update(cal_res.scalars().all())
+
+    # Apply CalendarDate exceptions: 1=added service, 2=removed service
+    cd_stmt = select(CalendarDate.service_id, CalendarDate.exception_type).where(
+        CalendarDate.feed_id == feed_id,
+        CalendarDate.date == target_date,
+    )
+    cd_res = await session.execute(cd_stmt)
+    for service_id, exc_type in cd_res.all():
+        if exc_type == 1:
+            active_services.add(service_id)
+        elif exc_type == 2:
+            active_services.discard(service_id)
+
+    return active_services
+
+
+@router.get(
+    "/feeds/{feed_slug}/plan",
+    response_model=ItemEnvelope[TripPlanResponse],
+    summary="Plan direct transit trips between two stops within a feed",
+)
+async def plan_trip(
+    feed_slug: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=64,
+            pattern=r"^[a-zA-Z0-9_-]+$",
+            description="Feed slug identifier",
+        ),
+    ],
+    origin_stop_id: Annotated[
+        str,
+        Query(
+            min_length=1,
+            max_length=255,
+            description="Origin GTFS stop identifier",
+        ),
+    ],
+    destination_stop_id: Annotated[
+        str,
+        Query(
+            min_length=1,
+            max_length=255,
+            description="Destination GTFS stop identifier",
+        ),
+    ],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    date: Annotated[
+        datetime_date | None,
+        Query(description="Travel date (defaults to current UTC date)"),
+    ] = None,
+    time: Annotated[
+        str | None,
+        Query(
+            pattern=r"^\d{1,2}:\d{2}(:\d{2})?$",
+            description="Earliest departure time in HH:MM or HH:MM:SS format",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=20,
+            description="Maximum number of itineraries to return (default 5, max 20)",
+        ),
+    ] = 5,
+) -> ItemEnvelope[TripPlanResponse]:
+    """Plan direct scheduled transit trips between an origin and destination stop.
+
+    Returns ordered itineraries departing on or after the specified departure time,
+    annotated with route summary, intermediate stop counts, scheduled times, and
+    live GTFS-Realtime TripUpdate delay estimates when available.
+    """
+    try:
+        feed = await _get_feed_by_slug(session, feed_slug)
+        clean_origin = origin_stop_id.strip()
+        clean_dest = destination_stop_id.strip()
+
+        if clean_origin == clean_dest:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Origin and destination stops must be different",
+            )
+
+        # Verify origin stop exists in feed
+        origin_res = await session.execute(
+            select(Stop).where(Stop.feed_id == feed.id, Stop.stop_id == clean_origin)
+        )
+        origin_stop = origin_res.scalar_one_or_none()
+        if origin_stop is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Origin stop '{clean_origin}' not found in feed '{feed_slug}'",
+            )
+
+        # Verify destination stop exists in feed
+        dest_res = await session.execute(
+            select(Stop).where(Stop.feed_id == feed.id, Stop.stop_id == clean_dest)
+        )
+        dest_stop = dest_res.scalar_one_or_none()
+        if dest_stop is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Destination stop '{clean_dest}' not found in feed '{feed_slug}'"
+                ),
+            )
+
+        target_date = date or datetime.now(UTC).date()
+
+        # Normalize target time to HH:MM:SS
+        if time:
+            clean_time = time.strip()
+            if len(clean_time.split(":")) == 2:
+                target_time = f"{clean_time}:00"
+            else:
+                target_time = clean_time
+        else:
+            target_time = datetime.now(UTC).strftime("%H:%M:%S")
+
+        # Resolve active service IDs for target date
+        active_service_ids = await _get_active_service_ids_for_date(
+            session, feed.id, target_date
+        )
+        if active_service_ids is not None and not active_service_ids:
+            return ItemEnvelope(
+                data=TripPlanResponse(
+                    feed_slug=feed.slug,
+                    origin_stop_id=clean_origin,
+                    destination_stop_id=clean_dest,
+                    target_date=target_date.isoformat(),
+                    target_time=target_time,
+                    itineraries=[],
+                )
+            )
+
+        # Join StopTime for origin and destination on same trip
+        st_origin = aliased(StopTime)
+        st_dest = aliased(StopTime)
+
+        query = (
+            select(
+                Trip,
+                Route,
+                st_origin.stop_sequence.label("origin_seq"),
+                st_origin.departure_time.label("origin_dep_time"),
+                st_dest.stop_sequence.label("dest_seq"),
+                st_dest.arrival_time.label("dest_arr_time"),
+            )
+            .join(
+                st_origin,
+                (st_origin.trip_id == Trip.id) & (st_origin.feed_id == feed.id),
+            )
+            .join(st_dest, (st_dest.trip_id == Trip.id) & (st_dest.feed_id == feed.id))
+            .join(Route, (Route.id == Trip.route_id) & (Route.feed_id == feed.id))
+            .where(
+                Trip.feed_id == feed.id,
+                st_origin.stop_id == origin_stop.id,
+                st_dest.stop_id == dest_stop.id,
+                st_origin.stop_sequence < st_dest.stop_sequence,
+                st_origin.departure_time >= target_time,
+            )
+        )
+
+        if active_service_ids is not None:
+            query = query.where(Trip.service_id.in_(active_service_ids))
+
+        query = query.order_by(st_origin.departure_time.asc()).limit(limit)
+        trip_rows = (await session.execute(query)).all()
+
+        if not trip_rows:
+            return ItemEnvelope(
+                data=TripPlanResponse(
+                    feed_slug=feed.slug,
+                    origin_stop_id=clean_origin,
+                    destination_stop_id=clean_dest,
+                    target_date=target_date.isoformat(),
+                    target_time=target_time,
+                    itineraries=[],
+                )
+            )
+
+        # Batch lookup any real-time TripUpdates for matching trips
+        matching_trip_ids = [row.Trip.trip_id for row in trip_rows]
+        tu_stmt = select(TripUpdate).where(
+            TripUpdate.feed_id == feed.id,
+            TripUpdate.trip_id.in_(matching_trip_ids),
+        )
+        tu_res = await session.execute(tu_stmt)
+        all_trip_updates = tu_res.scalars().all()
+
+        tu_by_trip: dict[str, list[TripUpdate]] = defaultdict(list)
+        for tu in all_trip_updates:
+            tu_by_trip[tu.trip_id].append(tu)
+
+        itineraries: list[TripItineraryResponse] = []
+        for row in trip_rows:
+            trip_obj = row.Trip
+            route_obj = row.Route
+            origin_seq = row.origin_seq
+            origin_dep_time = row.origin_dep_time
+            dest_seq = row.dest_seq
+            dest_arr_time = row.dest_arr_time
+
+            # Check for live trip updates matching origin stop or trip
+            trip_tus = tu_by_trip.get(trip_obj.trip_id, [])
+            origin_delay: int | None = None
+            dest_delay: int | None = None
+
+            for tu in trip_tus:
+                if tu.stop_id == clean_origin:
+                    origin_delay = tu.departure_delay or tu.arrival_delay
+                elif tu.stop_id == clean_dest:
+                    dest_delay = tu.arrival_delay or tu.departure_delay
+
+            if origin_delay is None and trip_tus:
+                for tu in trip_tus:
+                    if tu.stop_id is None and (tu.departure_delay or tu.arrival_delay):
+                        origin_delay = tu.departure_delay or tu.arrival_delay
+                        break
+
+            if dest_delay is None:
+                dest_delay = origin_delay
+
+            if origin_delay is not None:
+                if origin_delay > 60:
+                    realtime_status = "REALTIME_DELAYED"
+                elif origin_delay < -60:
+                    realtime_status = "REALTIME_EARLY"
+                else:
+                    realtime_status = "REALTIME_ON_TIME"
+            else:
+                realtime_status = "SCHEDULED"
+
+            origin_dep_sec = _time_str_to_seconds(origin_dep_time)
+            dest_arr_sec = _time_str_to_seconds(dest_arr_time)
+
+            if origin_delay:
+                origin_dep_sec += origin_delay
+            if dest_delay:
+                dest_arr_sec += dest_delay
+
+            duration_min = max(1, (dest_arr_sec - origin_dep_sec) // 60)
+            intermediate_count = max(0, dest_seq - origin_seq - 1)
+
+            origin_detail = StopPlanDetailResponse(
+                stop_id=origin_stop.stop_id,
+                name=origin_stop.name,
+                latitude=origin_stop.latitude,
+                longitude=origin_stop.longitude,
+                stop_sequence=origin_seq,
+                scheduled_time=origin_dep_time,
+                estimated_time=_add_delay_to_time(origin_dep_time, origin_delay),
+                delay_seconds=origin_delay,
+            )
+
+            dest_detail = StopPlanDetailResponse(
+                stop_id=dest_stop.stop_id,
+                name=dest_stop.name,
+                latitude=dest_stop.latitude,
+                longitude=dest_stop.longitude,
+                stop_sequence=dest_seq,
+                scheduled_time=dest_arr_time,
+                estimated_time=_add_delay_to_time(dest_arr_time, dest_delay),
+                delay_seconds=dest_delay,
+            )
+
+            itinerary = TripItineraryResponse(
+                route_id=route_obj.route_id,
+                route_short_name=route_obj.short_name,
+                route_long_name=route_obj.long_name,
+                route_color=route_obj.route_color,
+                text_color=route_obj.text_color,
+                route_type=route_obj.route_type,
+                trip_id=trip_obj.trip_id,
+                trip_headsign=trip_obj.trip_headsign,
+                direction_id=trip_obj.direction_id,
+                origin=origin_detail,
+                destination=dest_detail,
+                duration_minutes=duration_min,
+                intermediate_stops_count=intermediate_count,
+                realtime_status=realtime_status,
+            )
+            itineraries.append(itinerary)
+
+        return ItemEnvelope(
+            data=TripPlanResponse(
+                feed_slug=feed.slug,
+                origin_stop_id=clean_origin,
+                destination_stop_id=clean_dest,
+                target_date=target_date.isoformat(),
+                target_time=target_time,
+                itineraries=itineraries,
+            )
+        )
+    except HTTPException:
+        raise
+    except (OperationalError, DBAPIError, TimeoutError, OSError) as exc:
+        logger.warning("Database unavailable in plan_trip: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service is temporarily unavailable",

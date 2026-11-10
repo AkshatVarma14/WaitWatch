@@ -1043,3 +1043,72 @@ Addressed a targeted log-safety review on the duplicate-event suppression path i
 - `apps/api/tests/test_websocket.py` (added caplog regression test for duplicate drop logging)
 - `README.md` (updated test suite count)
 - `docs/development-ledger.md` (this ledger entry)
+
+---
+
+### 2026-11-10 — Stage 5, Slice 5.1: Direct Route Stop-to-Stop Trip Planner
+
+#### Overview
+Implemented the direct route stop-to-stop trip planner, fulfilling the first vertical slice of the Stage 5 trip planning milestone. Designed and delivered a fast, feed-scoped query path that finds scheduled and live direct transit journeys between any two stops on the same route or trip without requiring complex multi-transfer graph algorithms (RAPTOR/CSA). Integrated active GTFS calendar service evaluation (including `calendar_dates` exception overrides), departure time filtering with GTFS overnight/extended hours support (>24:00), and GTFS-Realtime `TripUpdate` delay enrichment to compute real-time adjusted departure/arrival times and delay badges. Built an accessible, responsive React frontend component (`TripPlanner`) with stop selectors, swap control (`⇄`), departure time input, TanStack Query integration, itinerary cards with route color badges, duration and intermediate stop counts, and interactive route map focus.
+
+#### Key Deliverables & Design Decisions
+1. **Direct Trip Plan Schemas** (`apps/api/app/schemas/transit.py`):
+   - `StopPlanDetailResponse`: Stop metadata (`stop_id`, `name`, `latitude`, `longitude`, `stop_sequence`), scheduled time (`HH:MM:SS`), real-time adjusted estimated time (`HH:MM:SS`), and optional delay seconds.
+   - `TripItineraryResponse`: Direct route journey option (`route_id`, `route_short_name`, `route_long_name`, `route_color`, `text_color`, `route_type`, `trip_id`, `trip_headsign`, `direction_id`), origin and destination stop details, trip duration in minutes, intermediate stops count, and delay status (`REALTIME_DELAYED`, `REALTIME_EARLY`, `REALTIME_ON_TIME`, `SCHEDULED`).
+   - `TripPlanResponse`: Feed-scoped plan envelope (`feed_slug`, `origin_stop_id`, `destination_stop_id`, `target_date`, `target_time`, `itineraries`).
+2. **Direct Trip Planning Endpoint & ANSI SQL Query** (`apps/api/app/api/transit.py`):
+   - Endpoint: `GET /api/v1/feeds/{feed_slug}/plan`. Validates feed existence, ensures origin and destination stops are distinct (returning HTTP 400 otherwise), and verifies both stops exist within the target feed (returning HTTP 404 otherwise).
+   - Single-query ANSI SQL join of `StopTime` aliased twice on `Trip.id` (`st_origin` and `st_dest`), joined with `Route`, `origin_stop`, and `dest_stop`, enforcing `st_origin.stop_sequence < st_dest.stop_sequence`. This naturally excludes trips traveling in the opposite direction.
+   - Calendar evaluation: resolves active service IDs for target date (day-of-week matching against `Calendar` plus `CalendarDate` exception overrides). When feeds lack calendar records, safely falls back to allowing all scheduled trips.
+   - Departure time filtering: filters `st_origin.departure_time >= target_time`, handling GTFS extended hours (`>24:00`).
+   - Sanitized HTTP 503 database unavailability error handling without credential leakage.
+3. **GTFS-Realtime Delay Enrichment** (`transit.py`):
+   - Batch-queries recent `TripUpdate` records for all matching `trip_id`s in a single query.
+   - Associates delay seconds and computes real-time adjusted arrival/departure times (`_add_delay_to_time`).
+   - Assigns passenger-facing real-time status badges (`REALTIME_DELAYED`, `REALTIME_EARLY`, `REALTIME_ON_TIME`, or `SCHEDULED`).
+4. **Web Client Integration** (`apps/web/src/types/transit.ts`, `apps/web/src/lib/api.ts`):
+   - Exported TypeScript interfaces: `StopPlanDetail`, `TripPlanRealtimeStatus`, `TripItinerary`, and `TripPlanResponse`.
+   - Added client function `planTrip(feedSlug, originStopId, destinationStopId, time?, date?, limit?)` encoding query parameters properly.
+5. **Interactive Trip Planner UI** (`apps/web/src/components/tripPlanner.tsx`, `apps/web/src/pages/Dashboard.tsx`):
+   - Stop dropdowns populated dynamically from feed stops with `isLoading` disabled states.
+   - Stop swap button (`⇄`) allowing instantaneous flipping of origin and destination stops.
+   - Departure time input with "Reset to Now" button.
+   - Validation alerts when origin and destination stops are identical.
+   - Loading spinner, retryable error alert, and clean empty state ("No Direct Trips Found").
+   - Itinerary cards with route badges styled in agency route colors, headsigns, departure and arrival times, real-time status badges, duration, intermediate stop counts ("Non-stop" vs "X stops"), and "View Route on Map →" button that triggers map focus on the route.
+   - Integrated tab navigation on `Dashboard.tsx` (`🚏 Stop Explorer & Arrivals` vs `🧭 Direct Trip Planner`).
+6. **Comprehensive Backend & Frontend Test Suites**:
+   - Backend Pytest (12 tests in `test_trip_plan.py`): Unknown feed (404), identical stops (400), unknown origin/destination stops (404), direct trip matching & duration/stop counts, reverse direction exclusion, departure time filtering, real-time delay integration, calendar active service filtering, unconfigured calendar fallback, limit parameter, and 503 database error handling.
+   - Frontend Vitest (9 tests in `tripPlanner.test.tsx`, 1 test in `api.test.ts`, 1 test in `Dashboard.test.tsx`): URL parameter formatting, no-feed prompt, stop dropdown population, stop swap, identical stops alert, itinerary rendering with real-time badges and intermediate stop counts, route selection map trigger, empty state, error alert and retry, and departure time input/reset.
+
+#### Verification Evidence
+- **Backend Pytest**: 165 passed across 12 test suites in 14.98s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint or formatting errors, 69 files formatted cleanly (`py -3.12 -m ruff check apps/api; py -3.12 -m ruff format --check apps/api`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall apps/api/app apps/api/tests`).
+- **Frontend Vitest**: 104 passed across 8 test suites in 4.90s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite in 2.78s (`npm.cmd run build`).
+- **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
+- **Secret Scan**: Clean, zero secrets detected.
+
+#### Changed / Added Files
+- `apps/api/app/schemas/transit.py` (added `StopPlanDetailResponse`, `TripItineraryResponse`, `TripPlanResponse`)
+- `apps/api/app/api/transit.py` (added `_get_active_service_ids_for_date`, time helpers, and `GET /feeds/{feed_slug}/plan` endpoint)
+- `apps/api/tests/test_trip_plan.py` (12 comprehensive trip planning integration tests)
+- `apps/web/src/types/transit.ts` (added trip plan TypeScript types)
+- `apps/web/src/lib/api.ts` (added `planTrip` API client method)
+- `apps/web/src/components/tripPlanner.tsx` (accessible direct trip planner component with itinerary cards)
+- `apps/web/src/pages/Dashboard.tsx` (added tab navigation and wired `TripPlanner`)
+- `apps/web/src/__tests__/tripPlanner.test.tsx` (9 comprehensive trip planner component tests)
+- `apps/web/src/__tests__/api.test.ts` (unit test for `planTrip` URL parameter formatting)
+- `apps/web/src/__tests__/Dashboard.test.tsx` (test for tab switching)
+- `README.md` (updated feature matrix, milestones, and test counts)
+- `docs/architecture/overview.md` (documented trip planner API and query design)
+- `docs/development-ledger.md` (this ledger entry)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - Trip planning is direct stop-to-stop on the same vehicle/trip; multi-transfer itineraries (transferring between routes or modes) remain a future enhancement (e.g. CSA / RAPTOR graph search).
+  - Production hosting and cloud deployment remain external to local Compose scaffolding.
+- **Next Roadmap Steps**:
+  - Multi-transfer trip planning algorithm evaluation or user bookmarks/favorites.

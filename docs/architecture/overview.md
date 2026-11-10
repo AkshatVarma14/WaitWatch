@@ -154,22 +154,33 @@ Currently implemented:
   - `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}` — stop details with parent station resolution
 - Stop arrivals & ETA prediction:
   - `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals` — predicted vehicle arrivals at stop, ordered by estimated arrival time, with delay seconds, source labeling, and observation timestamps.
+- Direct trip planning:
+  - `GET /api/v1/feeds/{feed_slug}/plan` — direct scheduled stop-to-stop itineraries between two stops on the same route/trip, with active calendar evaluation, departure time filtering, and GTFS-RT delay enrichment.
+- WebSocket streaming:
+  - `/api/v1/feeds/{feed_slug}/ws` — real-time feed update events via PostgreSQL `LISTEN/NOTIFY` pub/sub.
 - Error handling: Sanitized 503 response on database unavailability without credential leakage
 - Consistent response envelopes (`ItemEnvelope`, `PaginatedResponse` with `PaginationMeta`)
 
-Planned endpoints:
-- `GET /trips/{id}` — trip details with stop times (Stage 2)
-- `GET /vehicles` — current vehicle positions (Stage 2)
-- `GET /eta/{stop_id}` — predicted arrival times for a stop (Stage 3)
-
-### 5. WebSocket Server — `Planned`
+### 5. WebSocket Server & Live Updates — `Implemented (Slice 4.6)`
 
 Provides real-time updates to connected clients:
-- Vehicle position broadcasts (all vehicles or filtered by route)
-- ETA updates for subscribed stops
-- Service alerts and disruption notifications
+- Feed-scoped WebSocket endpoint (`/api/v1/feeds/{feed_slug}/ws`) with policy violation rejection (code 1008) for unknown or inactive feeds.
+- Lightweight PostgreSQL `LISTEN/NOTIFY` pub/sub on channel `waitwatch_feed_updates` coordinating across API processes.
+- Atomic notification staging within ingestion transactions (rollback publishes zero events).
+- In-memory thread-safe LRU deduplication and client-side duplicate filtering.
+- Client reconnection with exponential backoff and seamless fallback to 30-second steady-state REST polling on disconnect, error, or hidden tabs.
 
-### 6. Transit Explorer Web Frontend — `Implemented (Slice 4.1)`
+### 6. Direct Trip Planner Service — `Implemented (Slice 5.1)`
+
+Provides fast, feed-aware direct stop-to-stop journey options:
+- **Endpoint**: `GET /api/v1/feeds/{feed_slug}/plan?origin_stop_id={id}&destination_stop_id={id}&time={HH:MM:SS}&date={YYYY-MM-DD}&limit={n}`
+- **Direct Query Strategy**: Single ANSI SQL join of `StopTime` aliased twice on `Trip.id` where `st_origin.stop_id == origin.id`, `st_dest.stop_id == dest.id`, and `st_origin.stop_sequence < st_dest.stop_sequence`.
+- **Calendar Filtering**: Evaluates active GTFS service IDs for target date (day-of-week matching between start and end date plus `CalendarDate` exception overrides).
+- **Time Filtering & Extended Hours**: Supports departure time cutoff and GTFS overnight schedules (>24:00).
+- **GTFS-RT Delay Enrichment**: Evaluates recent `TripUpdate` records for matching trips, enriching itineraries with delay seconds, real-time adjusted arrival/departure times, and status (`REALTIME_DELAYED`, `REALTIME_EARLY`, `REALTIME_ON_TIME`, `SCHEDULED`).
+- **Interactive UI**: `TripPlanner` React component with stop dropdowns, stop swap button (`⇄`), departure time input, itinerary cards with route color badges, duration, intermediate stops, and "View Route on Map" route focus.
+
+### 7. Transit Explorer Web Frontend — `Implemented (Slice 4.1, 4.2 & 5.1)`
 
 User-facing React single-page application (`apps/web`):
 - **Client Architecture**:

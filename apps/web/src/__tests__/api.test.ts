@@ -10,6 +10,7 @@ import {
   fetchStops,
   getFeedWebSocketUrl,
   getWsBaseUrl,
+  planTrip,
 } from "../lib/api";
 
 describe("api client", () => {
@@ -212,5 +213,30 @@ describe("api client", () => {
 
     const encodedUrl = getFeedWebSocketUrl("metro city/uptown");
     expect(encodedUrl).toContain("/api/v1/feeds/metro%20city%2Fuptown/ws");
+  });
+
+  it("planTrip requests /api/v1/feeds/:slug/plan with query parameters", async () => {
+    const mockPlanData = {
+      feed_slug: "sf-muni",
+      origin_stop_id: "S1",
+      destination_stop_id: "S2",
+      target_time: "08:00:00",
+      target_date: "2026-11-10",
+      itineraries: [],
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: mockPlanData }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const res = await planTrip("sf-muni", "S1", "S2", "08:00:00", "2026-11-10", 3);
+    expect(res).toEqual(mockPlanData);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /\/api\/v1\/feeds\/sf-muni\/plan\?origin_stop_id=S1&destination_stop_id=S2&limit=3&time=08%3A00%3A00&date=2026-11-10/,
+      ),
+    );
   });
 });

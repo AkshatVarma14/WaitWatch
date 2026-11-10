@@ -6,6 +6,7 @@ import type {
   RouteSummary,
   StopArrivalPrediction,
   StopSummary,
+  TripPlanResponse,
 } from "../types/transit";
 
 const configuredApiUrl = import.meta.env.VITE_API_URL;
@@ -149,6 +150,31 @@ export async function fetchArrivals(
   });
   const envelope = await fetchApi<ItemEnvelope<StopArrivalPrediction[]>>(
     `/api/v1/feeds/${encodeURIComponent(feedSlug)}/stops/${encodeURIComponent(stopId)}/arrivals?${searchParams.toString()}`,
+  );
+  return envelope.data;
+}
+
+export async function planTrip(
+  feedSlug: string,
+  originStopId: string,
+  destinationStopId: string,
+  time?: string,
+  date?: string,
+  limit: number = 5,
+): Promise<TripPlanResponse> {
+  const searchParams = new URLSearchParams({
+    origin_stop_id: originStopId,
+    destination_stop_id: destinationStopId,
+    limit: String(limit),
+  });
+  if (time && time.trim()) {
+    searchParams.set("time", time.trim());
+  }
+  if (date && date.trim()) {
+    searchParams.set("date", date.trim());
+  }
+  const envelope = await fetchApi<ItemEnvelope<TripPlanResponse>>(
+    `/api/v1/feeds/${encodeURIComponent(feedSlug)}/plan?${searchParams.toString()}`,
   );
   return envelope.data;
 }

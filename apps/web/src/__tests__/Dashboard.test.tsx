@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Dashboard } from "../pages/Dashboard";
 
@@ -62,6 +62,25 @@ describe("Dashboard", () => {
     renderWithClient(<Dashboard />);
     expect(
       screen.getByText(/Stage 4: Map & Transit Explorer/i),
+    ).toBeInTheDocument();
+  });
+
+  it("renders navigation tabs and switches between Stop Explorer and Direct Trip Planner", () => {
+    renderWithClient(<Dashboard />);
+    const explorerTab = screen.getByRole("tab", { name: /Stop Explorer & Arrivals/i });
+    const plannerTab = screen.getByRole("tab", { name: /Direct Trip Planner/i });
+
+    expect(explorerTab).toBeInTheDocument();
+    expect(plannerTab).toBeInTheDocument();
+    expect(explorerTab).toHaveAttribute("aria-selected", "true");
+    expect(plannerTab).toHaveAttribute("aria-selected", "false");
+
+    // Click planner tab
+    fireEvent.click(plannerTab);
+    expect(plannerTab).toHaveAttribute("aria-selected", "true");
+    expect(explorerTab).toHaveAttribute("aria-selected", "false");
+    expect(
+      screen.getByRole("region", { name: /Direct trip planner/i }),
     ).toBeInTheDocument();
   });
 });

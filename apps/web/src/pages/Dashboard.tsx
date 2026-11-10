@@ -1,15 +1,18 @@
+import { useState } from "react";
 import { ArrivalsBoard } from "../components/arrivalsBoard";
 import { FeedSelector } from "../components/feedSelector";
 import { MapDetailsPanel } from "../components/mapDetailsPanel";
 import { MapView } from "../components/mapView";
 import { RouteSelector } from "../components/routeSelector";
 import { StopSearch } from "../components/stopSearch";
+import { TripPlanner } from "../components/tripPlanner";
 import { useFeedLiveUpdates } from "../lib/useFeedLiveUpdates";
 import { useAppStore } from "../stores/appStore";
 
 export function Dashboard() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
   const liveStatus = useAppStore((state) => state.liveStatus);
+  const [activeTab, setActiveTab] = useState<"arrivals" | "planner">("arrivals");
 
   // Subscribe to feed-scoped WebSocket live transit updates
   useFeedLiveUpdates(selectedFeedSlug);
@@ -106,24 +109,64 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* Stop Navigation & Live Arrivals */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Stop Search (5 cols on lg) */}
-          <section
-            className="lg:col-span-5 space-y-6"
-            aria-label="Feed and stop navigation"
+        {/* Section Navigation Tabs */}
+        <div
+          role="tablist"
+          aria-label="Transit modes"
+          className="flex items-center gap-2 border-b border-gray-800 pb-2"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "arrivals"}
+            onClick={() => setActiveTab("arrivals")}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+              activeTab === "arrivals"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800"
+            }`}
           >
-            <StopSearch />
-          </section>
-
-          {/* Right Column: Arrivals Board (7 cols on lg) */}
-          <section
-            className="lg:col-span-7"
-            aria-label="Stop arrivals display"
+            🚏 Stop Explorer & Arrivals
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "planner"}
+            onClick={() => setActiveTab("planner")}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+              activeTab === "planner"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800"
+            }`}
           >
-            <ArrivalsBoard />
-          </section>
+            🧭 Direct Trip Planner
+          </button>
         </div>
+
+        {/* Tab Content */}
+        {activeTab === "arrivals" ? (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Column: Stop Search (5 cols on lg) */}
+            <section
+              className="lg:col-span-5 space-y-6"
+              aria-label="Feed and stop navigation"
+            >
+              <StopSearch />
+            </section>
+
+            {/* Right Column: Arrivals Board (7 cols on lg) */}
+            <section
+              className="lg:col-span-7"
+              aria-label="Stop arrivals display"
+            >
+              <ArrivalsBoard />
+            </section>
+          </div>
+        ) : (
+          <section aria-label="Direct trip planner section">
+            <TripPlanner />
+          </section>
+        )}
       </main>
 
       {/* Footer */}
