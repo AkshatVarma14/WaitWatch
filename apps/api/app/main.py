@@ -20,7 +20,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     """Handle application startup and shutdown."""
-    logger.info("WaitWatch API starting up (env=%s)", settings.environment)
+    logger.info(
+        "WaitWatch API starting up (env=%s, db=%s)",
+        settings.environment,
+        settings.sanitized_database_url,
+    )
     yield
     logger.info("WaitWatch API shutting down")
     await engine.dispose()

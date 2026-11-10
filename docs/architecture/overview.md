@@ -72,6 +72,18 @@ WaitWatch is a web application built on a three-tier architecture designed for r
 
 ## Key Services
 
+### 0. Database Layer & Transit Models — `Implemented (Slice 1.1)`
+
+Establishes the normalized PostgreSQL/PostGIS database schema scoped for multi-city support:
+- **`TransitFeed`**: Multi-city configuration, feed URLs, environment variable key reference, operational status, and timestamps.
+- **`Agency`**: Agency profiles, timezone, and contact details scoped to `feed_id`.
+- **`Route`**: Transit route classifications and styling scoped to `feed_id`.
+- **`Stop`**: Transit stops and stations with PostGIS `geography(POINT, 4326)` column, GiST index, and parent station hierarchy.
+- **`Trip`**: Journeys along routes with calendar service IDs and accessibility indicators.
+- **`StopTime`**: Scheduled arrival/departure times, stop ordering, and pickup/drop-off types.
+- **`Calendar` & `CalendarDate`**: Weekly service patterns and date-specific exceptions.
+- **Alembic Migration**: `0001_initial_transit_models` providing reproducible upgrade and downgrade DDL with explicit PostGIS extension setup.
+
 ### 1. GTFS Static Ingestion Service — `Planned`
 
 Downloads GTFS static feeds (ZIP archives containing CSV files), parses them according to the GTFS specification, and populates the database with routes, stops, trips, stop times, calendar entries, and route shapes. Runs on-demand or on a configurable schedule to keep data current.
@@ -167,12 +179,15 @@ Vehicle Positions + Schedule Data + Historical Delays
 
 ## Current Status
 
-**Only the project foundation is implemented** (Stage 0). This includes:
+**Stage 0 (Project Foundation) and Stage 1, Slice 1.1 (Database Foundation & Transit Models) are implemented**:
 
 - Repository structure and monorepo layout
-- Frontend scaffolding (React + Vite + TypeScript + Tailwind CSS)
-- Basic backend scaffolding (FastAPI project structure)
-- CI/CD pipeline configuration
-- Documentation and environment configuration templates
+- Frontend scaffolding (React + Vite + TypeScript + Tailwind CSS + TanStack Query + Zustand)
+- Backend scaffolding (FastAPI + Pydantic + SQLAlchemy async + Alembic)
+- Database connection lifecycle with credential sanitization and real non-leaking health checks
+- 8 transit-domain SQLAlchemy models with multi-city support and PostGIS geospatial types
+- Initial Alembic migration (`0001_initial_transit_models`) with explicit PostGIS extension setup
+- Unit test suites for frontend (Vitest) and backend (Pytest, 18 tests)
+- CI/CD pipeline configuration with automated GitHub Actions
 
-The database schema, GTFS ingestion services, real-time tracking, map UI, and ETA prediction are all **planned for subsequent stages**.
+The GTFS static ingestion pipeline, real-time tracking, map UI, and ETA prediction are **planned for subsequent stages/slices**.

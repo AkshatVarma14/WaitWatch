@@ -1,5 +1,7 @@
 """WaitWatch API — Core configuration."""
 
+from urllib.parse import urlsplit, urlunsplit
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,7 +18,10 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     # Database
-    database_url: str = "postgresql+asyncpg://waitwatch:waitwatch@localhost:5432/waitwatch"
+    database_url: str = (
+        "postgresql+asyncpg://waitwatch:waitwatch@localhost:5432/waitwatch"
+    )
+    database_connect_timeout: float = 3.0
 
     # Server
     api_host: str = "0.0.0.0"
@@ -29,6 +34,24 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",")]
+
+    @property
+    def sanitized_database_url(self) -> str:
+        """Return the database URL with credentials safely masked for logging."""
+        try:
+            parsed = urlsplit(self.database_url)
+            if parsed.password:
+                user_part = parsed.username or ""
+                host_part = parsed.hostname or ""
+                netloc = f"{user_part}:***@{host_part}"
+                if parsed.port:
+                    netloc += f":{parsed.port}"
+                return urlunsplit(
+                    (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+                )
+            return self.database_url
+        except Exception:
+            return "postgresql+asyncpg://***"
 
 
 settings = Settings()
