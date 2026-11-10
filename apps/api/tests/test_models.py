@@ -12,12 +12,13 @@ from app.models import (
     StopTime,
     TransitFeed,
     Trip,
+    VehicleObservation,
     VehiclePosition,
 )
 
 
 def test_metadata_contains_all_models() -> None:
-    """Verify all transit tables including vehicle_positions are registered."""
+    """Verify all transit tables including vehicle_observations are registered."""
     table_names = set(Base.metadata.tables.keys())
     expected = {
         "transit_feeds",
@@ -29,6 +30,7 @@ def test_metadata_contains_all_models() -> None:
         "calendars",
         "calendar_dates",
         "vehicle_positions",
+        "vehicle_observations",
     }
     assert expected.issubset(table_names), f"Missing tables: {expected - table_names}"
 
@@ -340,3 +342,48 @@ def test_vehicle_position_model_structure() -> None:
         if uc.__class__.__name__ == "UniqueConstraint"
     }
     assert ("feed_id", "entity_id") in unique_constraints
+
+
+def test_vehicle_observation_model_structure() -> None:
+    """Verify columns, constraints, and types on VehicleObservation model."""
+    mapper = inspect(VehicleObservation)
+    columns = {c.name for c in mapper.columns}
+    expected_cols = {
+        "id",
+        "feed_id",
+        "entity_id",
+        "vehicle_id",
+        "vehicle_label",
+        "license_plate",
+        "trip_id",
+        "route_id",
+        "direction_id",
+        "start_time",
+        "start_date",
+        "schedule_relationship",
+        "stop_id",
+        "current_stop_sequence",
+        "current_status",
+        "latitude",
+        "longitude",
+        "point",
+        "bearing",
+        "odometer",
+        "speed",
+        "congestion_level",
+        "occupancy_status",
+        "occupancy_percentage",
+        "observed_at",
+        "vehicle_timestamp",
+        "feed_timestamp",
+        "recorded_at",
+    }
+    assert expected_cols.issubset(columns)
+
+    # Unique constraint on (feed_id, entity_id, observed_at)
+    unique_constraints = {
+        tuple(col.name for col in uc.columns)
+        for uc in mapper.persist_selectable.constraints
+        if uc.__class__.__name__ == "UniqueConstraint"
+    }
+    assert ("feed_id", "entity_id", "observed_at") in unique_constraints

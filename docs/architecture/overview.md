@@ -108,17 +108,24 @@ Polls and parses GTFS-Realtime Protocol Buffer feeds:
   - Administrative CLI: `python -m app.services.realtime.cli poll-vehicles --feed-id <ID> | --slug <SLUG> [--file <PATH>]`.
   - Streaming HTTP downloader with timeout, payload size bounds (50MB), and URL credential masking.
 - **Forward Migration**: `0003_vehicle_positions` creating table with spatial GiST index on `point`.
+- **Historical Vehicle Observations (`services/realtime/`)**:
+  - `VehicleObservation` append-only historical telemetry model with PostGIS GiST index.
+  - Forward migration `0004_vehicle_observations` with composite uniqueness constraint `(feed_id, entity_id, observed_at)`.
+  - Deterministic timestamp fallback hierarchy (`vehicle_timestamp` -> `feed_timestamp` -> server receipt time).
+  - Atomic dual-persistence transaction: updates current-state snapshot table and appends deduplicated observations in one all-or-nothing transaction.
+  - Internal query helper `get_recent_observations(...)` with mandatory `since` bound and result capping (1,000 max).
 - **Planned Remaining Stage 2 Work**:
   - GTFS-Realtime TripUpdates ingestion (delays, arrival/departure estimates)
   - GTFS-Realtime ServiceAlerts ingestion
   - Background polling scheduler
   - WebSocket broadcaster for live position streaming
 
-### 3. ETA Prediction Service — `Planned`
+### 3. ETA Prediction Service — `In Progress (Slice 3.1 Implemented)`
 
 Calculates estimated arrival times at stops using:
-- Current live vehicle position and speed
-- Scheduled stop times from GTFS static data
+- Current live vehicle position and speed (`vehicle_positions` snapshot)
+- Longitudinal vehicle observation history (`vehicle_observations` table)
+- Scheduled stop times from GTFS static data (`stop_times`, `trips`)
 - Historical delay patterns for the same route/time-of-day/day-of-week
 
 Produces ETA updates that are broadcast via WebSocket to subscribed clients.

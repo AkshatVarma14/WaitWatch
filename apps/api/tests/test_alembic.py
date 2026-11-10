@@ -13,12 +13,13 @@ def test_alembic_config_resolves() -> None:
     assert ini_path.is_file(), f"Missing alembic.ini at {ini_path}"
 
     alembic_cfg = Config(str(ini_path))
+    alembic_cfg.set_main_option("script_location", str(api_dir / "alembic"))
     script = ScriptDirectory.from_config(alembic_cfg)
 
-    # Verify head migration is 0003_vehicle_positions
+    # Verify head migration is 0004_vehicle_observations
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "0003_vehicle_positions"
+    assert heads[0] == "0004_vehicle_observations"
 
     # Verify initial migration
     rev_0001 = script.get_revision("0001_initial_transit_models")
@@ -36,6 +37,12 @@ def test_alembic_config_resolves() -> None:
     assert rev_0003 is not None
     assert rev_0003.down_revision == "0002_optional_agency_id"
     assert "vehicle_positions" in (rev_0003.doc or "").lower()
+
+    # Verify forward migration 0004
+    rev_0004 = script.get_revision("0004_vehicle_observations")
+    assert rev_0004 is not None
+    assert rev_0004.down_revision == "0003_vehicle_positions"
+    assert "vehicle_observations" in (rev_0004.doc or "").lower()
 
 
 def test_migration_environment_settings_integration() -> None:

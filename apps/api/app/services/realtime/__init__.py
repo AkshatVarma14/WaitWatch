@@ -17,6 +17,7 @@ from app.services.realtime.parser import (
     ParsedVehiclePosition,
     parse_vehicle_positions,
 )
+from app.services.realtime.query import get_recent_observations
 from app.services.realtime.service import VehiclePositionIngestionService
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "UnsupportedIncrementalityError",
     "VehiclePositionIngestionService",
     "download_realtime_feed",
+    "get_recent_observations",
     "parse_vehicle_positions",
 ]

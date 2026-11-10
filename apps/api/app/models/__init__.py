@@ -8,6 +8,7 @@ from app.models.route import Route
 from app.models.stop import Stop
 from app.models.stop_time import StopTime
 from app.models.trip import Trip
+from app.models.vehicle_observation import VehicleObservation
 from app.models.vehicle_position import VehiclePosition
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "StopTime",
     "TransitFeed",
     "Trip",
+    "VehicleObservation",
     "VehiclePosition",
 ]

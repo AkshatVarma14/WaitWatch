@@ -309,4 +309,83 @@ This document tracks verified stage milestones, implementation slices, verificat
   - Background polling daemon / cron scheduler is not yet active (manual/CLI triggering only).
   - Live vehicle positions are stored in the database snapshot table but not yet broadcast over WebSockets or rendered on the frontend map.
 - **Next Authorized Step**:
-  - **Stage 2, Slice 2.2**: GTFS-Realtime Trip Updates & Delay Ingestion (or Vehicle Position WebSocket Broadcast depending on roadmap prioritization).
+  - **Stage 3, Slice 3.1**: Historical Vehicle Observation Storage (Completed below).
+
+---
+
+## Stage 3: ETA Prediction & Historical Analysis
+
+### Slice 3.1: Historical Vehicle Observation Storage (Completed & Verified)
+
+- **Date**: 2026-11-10
+- **Goal**: Implement longitudinal historical vehicle observation storage (`VehicleObservation`), composite uniqueness and idempotency constraints on `(feed_id, entity_id, observed_at)`, deterministic timestamp fallback hierarchy (`vehicle_timestamp` → `feed_timestamp` → server receipt time), atomic dual-persistence transaction (replacing current-state snapshot while appending deduplicated history samples), internal query helper `get_recent_observations(...)` with mandatory `since` time bounding and result limits, forward Alembic migration `0004_vehicle_observations` with spatial GiST indexing, and comprehensive deterministic test suite.
+
+#### Implemented Components
+1. **Database Model & Migration** (`apps/api/app/models/vehicle_observation.py`, `apps/api/alembic/versions/0004_vehicle_observations.py`):
+   - `VehicleObservation` model with feed foreign key (`transit_feeds.id`, cascade delete).
+   - Distinct timestamp fields: `observed_at` (canonical observation time), `vehicle_timestamp` (source vehicle time), `feed_timestamp` (feed header time), and `recorded_at` (server receipt time).
+   - Identifiers and movement telemetry: `entity_id`, `vehicle_id`, `vehicle_label`, `license_plate`, `trip_id`, `route_id`, `direction_id`, `stop_id`, `current_stop_sequence`, `current_status`, `latitude`, `longitude`, `point` (PostGIS geography point with GiST index), `bearing`, `odometer`, `speed`, `congestion_level`, `occupancy_status`, `occupancy_percentage`.
+   - Composite unique constraint: `UniqueConstraint("feed_id", "entity_id", "observed_at", name="uq_vehicle_observations_feed_entity_observed_at")`.
+   - Performance indexes: `ix_vehicle_obs_feed_id`, `ix_vehicle_obs_feed_vehicle_time`, `ix_vehicle_obs_feed_route_time`, `ix_vehicle_obs_feed_observed_at`, and GiST spatial index `ix_vehicle_obs_point`.
+   - Relationship `TransitFeed.vehicle_observations` added to `TransitFeed`.
+   - Forward migration `0004_vehicle_observations` generating clean upgrade and downgrade DDL.
+2. **Atomic Dual-Persistence Ingestion** (`apps/api/app/services/realtime/service.py`):
+   - `VehiclePositionIngestionService`: In a single atomic transaction:
+     1. Replaces current-state snapshot in `vehicle_positions`.
+     2. Extracts candidate historical observations with deterministic fallback: `observed_at = vp.vehicle_timestamp or parsed_feed.feed_timestamp or receipt_time`.
+     3. Queries existing `(entity_id, observed_at)` keys for the current batch.
+     4. Appends only new observations (deduplicating repeat polls of identical telemetry).
+     5. Updates `TransitFeed.last_realtime_poll_at`.
+   - Atomic rollback: failure at any step rolls back both snapshot and history changes.
+3. **Internal Query Helper** (`apps/api/app/services/realtime/query.py`):
+   - `get_recent_observations(session, feed_id, since, ...)`:
+     - Mandatory `since: datetime` validation (raises `ValueError` if absent, preventing unbounded queries).
+     - Optional `until`, `vehicle_id`, `entity_id`, `route_id`, `trip_id` filters.
+     - Enforced `limit` capped at 1,000 rows.
+     - Ordered newest-first (`observed_at.desc()`).
+4. **Comprehensive Test Suite** (`apps/api/tests/test_vehicle_observations.py`):
+   - 9 deterministic unit and integration tests covering:
+     - First insert creating both snapshot and history rows.
+     - Repeat-poll deduplication with identical timestamps.
+     - Subsequent poll with new observation timestamp appending to history while refreshing snapshot.
+     - Source timestamp fallback hierarchy (`vehicle_timestamp` absent -> `feed_timestamp`; both absent -> receipt time).
+     - Snapshot and history atomic rollback on simulated database failure.
+     - Rejection of invalid / DIFFERENTIAL payloads preserving snapshot and history intact.
+     - Feed isolation across multiple feeds.
+     - Query helper filtering, ordering, time bounds, and limit capping.
+     - Mandatory `since` validation in query helper.
+
+#### Verification Evidence
+- **Pytest**: 96 tests passed in 9.56s (`py -3.12 -m pytest apps/api/tests -v`).
+- **Ruff**: Zero lint errors and clean formatting across `app/`, `tests/`, and `alembic/` (53 files checked).
+- **Python Compilation**: All backend modules compile cleanly (`py -3.12 -m compileall app tests alembic`).
+- **Alembic Offline Validation**:
+  - `alembic upgrade head --sql` passed and generated clean DDL.
+  - `alembic downgrade 0004_vehicle_observations:0003_vehicle_positions --sql` passed and generated clean drop DDL.
+- **Frontend Regression**:
+  - `npm.cmd test -- --run`: 2 test files, 6 tests passed in 3.38s.
+  - `npm.cmd run build`: production build passed in 2.34s without errors.
+
+#### Changed / Added Files
+- `apps/api/app/models/vehicle_observation.py` (new `VehicleObservation` model)
+- `apps/api/app/models/feed.py` (added `vehicle_observations` relationship)
+- `apps/api/app/models/__init__.py` (exported `VehicleObservation`)
+- `apps/api/alembic/versions/0004_vehicle_observations.py` (new forward migration)
+- `apps/api/app/services/realtime/query.py` (internal query helper `get_recent_observations`)
+- `apps/api/app/services/realtime/__init__.py` (exported query helper)
+- `apps/api/app/services/realtime/service.py` (atomic snapshot + deduplicated history persistence)
+- `apps/api/tests/test_alembic.py` (updated migration head verification to 0004)
+- `apps/api/tests/test_models.py` (added vehicle observation model structure test)
+- `apps/api/tests/test_vehicle_observations.py` (9 new comprehensive tests)
+- `docs/database/database-design.md` (documented `vehicle_observations` table, migration 0004, and idempotency strategy)
+- `docs/architecture/overview.md` (updated historical observations and ETA service status)
+- `README.md` (updated development status and milestones)
+- `docs/development-ledger.md` (this ledger)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - Historical observations are accumulated via GTFS-RT polling; retention policy / partition pruning is not yet implemented.
+  - No public REST API endpoints expose historical observations directly (internal query helper only for ETA service).
+  - Background polling daemon / cron scheduler is not yet active (manual/CLI triggering only).
+- **Next Authorized Step**:
+  - **Stage 3, Slice 3.2**: Historical Travel Time & Delay Calculation (or ETA Prediction Engine).

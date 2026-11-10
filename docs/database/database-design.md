@@ -257,6 +257,47 @@ Stores the current vehicle position snapshot for each feed, parsed from GTFS-Rea
 - `INDEX (feed_id, vehicle_id)`
 - `INDEX (point)` using GiST
 
+### `vehicle_observations`
+Append-only historical vehicle telemetry samples used for ETA estimation and delay pattern analysis.
+
+| Column | Type | Modifiers | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | PK, SERIAL | Internal surrogate key |
+| `feed_id` | `INTEGER` | FK -> `transit_feeds.id`, NOT NULL | Feed scoping |
+| `entity_id` | `VARCHAR(255)` | NOT NULL | Feed entity identifier |
+| `vehicle_id` | `VARCHAR(255)` | NULLABLE | Agency vehicle identifier |
+| `vehicle_label` | `VARCHAR(255)` | NULLABLE | User-facing vehicle label |
+| `license_plate` | `VARCHAR(255)` | NULLABLE | Vehicle license plate |
+| `trip_id` | `VARCHAR(255)` | NULLABLE | Source GTFS trip_id |
+| `route_id` | `VARCHAR(255)` | NULLABLE | Source GTFS route_id |
+| `direction_id` | `INTEGER` | NULLABLE | 0 = outbound, 1 = inbound |
+| `start_time` | `VARCHAR(10)` | NULLABLE | Trip scheduled start time |
+| `start_date` | `VARCHAR(10)` | NULLABLE | Trip service date `YYYYMMDD` |
+| `schedule_relationship`| `INTEGER` | NULLABLE | 0=SCHEDULED, 1=ADDED, 2=UNSCHEDULED, 3=CANCELED |
+| `stop_id` | `VARCHAR(255)` | NULLABLE | Current or approaching GTFS stop_id |
+| `current_stop_sequence`| `INTEGER` | NULLABLE | Current stop sequence number |
+| `current_status` | `INTEGER` | NULLABLE | 0=INCOMING_AT, 1=STOPPED_AT, 2=IN_TRANSIT_TO |
+| `latitude` | `DOUBLE PRECISION` | NOT NULL | WGS84 latitude `[-90, 90]` |
+| `longitude` | `DOUBLE PRECISION` | NOT NULL | WGS84 longitude `[-180, 180]` |
+| `point` | `geography(POINT, 4326)` | NULLABLE | PostGIS spatial point |
+| `bearing` | `DOUBLE PRECISION` | NULLABLE | Direction of travel `[0, 360]` |
+| `odometer` | `DOUBLE PRECISION` | NULLABLE | Distance traveled in meters |
+| `speed` | `DOUBLE PRECISION` | NULLABLE | Current speed in m/s |
+| `congestion_level` | `INTEGER` | NULLABLE | GTFS-RT congestion level |
+| `occupancy_status` | `INTEGER` | NULLABLE | GTFS-RT vehicle occupancy status |
+| `occupancy_percentage`| `INTEGER` | NULLABLE | GTFS-RT passenger capacity percentage |
+| `observed_at` | `TIMESTAMP WITH TZ` | NOT NULL | Canonical observation timestamp (fallback hierarchy) |
+| `vehicle_timestamp` | `TIMESTAMP WITH TZ` | NULLABLE | Source vehicle timestamp from GTFS-RT message |
+| `feed_timestamp` | `TIMESTAMP WITH TZ` | NULLABLE | FeedHeader timestamp from GTFS-RT message |
+| `recorded_at` | `TIMESTAMP WITH TZ` | NOT NULL, DEFAULT now() | Server ingestion receipt timestamp |
+
+**Constraints & Indexes:**
+- `UNIQUE (feed_id, entity_id, observed_at)`
+- `INDEX (feed_id, observed_at)`
+- `INDEX (feed_id, route_id, observed_at)`
+- `INDEX (feed_id, vehicle_id, observed_at)`
+- `INDEX (point)` using GiST
+
 ---
 
 ## 3. Geospatial Design & PostGIS Extension
@@ -266,7 +307,7 @@ PostGIS extension is explicitly configured in migration `0001_initial_transit_mo
 CREATE EXTENSION IF NOT EXISTS postgis;
 ```
 
-Both the `stops` and `vehicle_positions` tables contain:
+The `stops`, `vehicle_positions`, and `vehicle_observations` tables contain:
 1. `latitude` and `longitude` numeric floats for immediate, dialect-agnostic coordinate display.
 2. `point` (`geography(POINT, 4326)`) with a GiST index for spatial queries such as:
    - Proximity search: `ST_DWithin(point, ST_MakePoint(lon, lat)::geography, radius_meters)`
@@ -282,10 +323,11 @@ For local unit testing without PostGIS/SpatiaLite, a fallback compilation rule c
   - `0001_initial_transit_models`: Initial schema creation for all 8 static transit tables with PostGIS extension.
   - `0002_optional_agency_id`: Alter `agencies.agency_id` to `nullable=True` to support valid single-agency GTFS Schedule feeds per specification.
   - `0003_vehicle_positions`: Create `vehicle_positions` current snapshot table with spatial GiST index and feed scoping.
+  - `0004_vehicle_observations`: Create `vehicle_observations` historical telemetry table with composite uniqueness constraint and spatial GiST index.
 - **Offline Generation**:
   ```bash
   alembic upgrade head --sql
-  alembic downgrade 0003_vehicle_positions:0002_optional_agency_id --sql
+  alembic downgrade 0004_vehicle_observations:0003_vehicle_positions --sql
   ```
 - **Live Upgrade**:
   ```bash
@@ -325,3 +367,28 @@ The realtime vehicle position ingestion pipeline (`VehiclePositionIngestionServi
    - GTFS-Realtime `DIFFERENTIAL` incrementality is unsupported by design for this consumer; rejected with `UnsupportedIncrementalityError` without modifying database state.
 4. **Operational Timestamp Tracking**:
    - `TransitFeed.last_realtime_poll_at` is updated only upon successful transaction commit.
+
+---
+
+## 7. Historical Vehicle Observation Storage & Idempotency Strategy
+
+The historical observation pipeline records longitudinal vehicle telemetry for ETA calculation:
+
+1. **Composite Uniqueness Constraint**:
+   - `UNIQUE (feed_id, entity_id, observed_at)` ensures that duplicate samples polled repeatedly from a GTFS-RT feed cannot create duplicate database rows.
+2. **Deterministic Timestamp Fallback Hierarchy**:
+   - GTFS-RT vehicle telemetry may omit the vehicle-level timestamp.
+   - The canonical `observed_at` timestamp is derived deterministically:
+     `observed_at = VehiclePosition.timestamp or FeedHeader.timestamp or server_receipt_time`
+   - All three source timestamps (`observed_at`, `vehicle_timestamp`, `feed_timestamp`, `recorded_at`) are stored as distinct columns to maintain auditability.
+3. **Atomic Dual-Persistence Transaction**:
+   - In each poll cycle, `VehiclePositionIngestionService` atomically:
+     1. Replaces the current-state `vehicle_positions` snapshot.
+     2. Queries existing `(entity_id, observed_at)` keys for the current batch.
+     3. Inserts only novel `VehicleObservation` rows into history.
+     4. Updates `TransitFeed.last_realtime_poll_at`.
+   - If any step fails, the entire transaction rolls back; no orphan snapshots or half-persisted history records remain.
+4. **Bounded Historical Access**:
+   - Historical queries require a mandatory `since` timestamp parameter (`get_recent_observations`).
+   - Unbounded queries across all history are strictly prohibited to prevent memory exhaustion.
+   - Result limits are capped at 1,000 records per query call.
