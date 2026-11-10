@@ -982,3 +982,37 @@ Conducted an independent code review and correctness audit of the Stage 4.6 WebS
 - `README.md` (updated feature summary and test counts)
 - `docs/architecture/overview.md` (documented inactive feed rejection and event deduplication)
 - `docs/development-ledger.md` (this audit entry)
+
+### 2026-11-10 — Stage 4, Slice 4.6: Review Corrections & Log Security Polish
+
+#### Overview
+Addressed three targeted code review findings on the Stage 4.6 implementation:
+1. Hardened logging in `ConnectionManager.handle_db_notification` to emit only the safe exception type (`error_type=...`), ensuring validation errors and malformed inputs never leak rejected payload values or URLs into logs.
+2. Upgraded `_deduplicate_event` to true bounded LRU cache semantics by moving duplicate hits to the most-recently-used end of the `OrderedDict`. Derived the deduplication key from raw decoded payload data prior to Pydantic model validation, making the deterministic composite fallback key reachable for legacy payloads without `event_id`.
+3. Updated `README.md` feature summary to clearly separate implemented functionality (Slices 1.1–4.6) from future roadmap items without overstating scope.
+
+#### Key Deliverables & Test Verification
+1. **Log Sanitization on Malformed Payloads** (`apps/api/app/services/realtime/websocket_manager.py`):
+   - Replaced logging of raw exception objects `%s` with `error_type=%s` (`type(exc).__name__`), preventing Pydantic validation error strings from printing rejected input values.
+   - Added Pytest caplog test `test_websocket_manager_malformed_payload_does_not_log_sensitive_values` proving sentinel tokens, passwords, and private URLs in malformed JSON or invalid schema payloads are never emitted in logs.
+2. **True LRU Cache Semantics & Reachable Dedup Fallback** (`websocket_manager.py`):
+   - Updated `_deduplicate_event` to execute `self._recent_events.move_to_end(event_key)` on duplicate hits, ensuring genuine Least Recently Used eviction.
+   - Added Pytest test `test_websocket_manager_lru_recency_and_eviction` verifying recency preservation and eviction order when capacity is reached.
+   - Evaluated raw payload `data.get("event_id")` before `FeedUpdateEvent.model_validate(data)`, falling back to `{slug}:{update_type}:{timestamp}` if absent.
+   - Added Pytest test `test_websocket_manager_legacy_payload_fallback_deduplication` proving legacy messages lacking `event_id` are cleanly deduplicated.
+3. **Documentation Alignment** (`README.md`):
+   - Replaced "Features (Planned) - All features listed below are planned and not yet implemented" with separate "Implemented Functionality" and "Future Roadmap" sections.
+   - Updated total test suite counts: 152 Pytest backend tests and 93 Vitest frontend tests.
+
+#### Verification Evidence
+- **Backend Pytest**: 152 passed in 12.18s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint or formatting errors (`py -3.12 -m ruff check .; py -3.12 -m ruff format --check .`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall app tests`).
+- **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
+- **Secret Scan**: Clean, zero secrets detected.
+
+#### Changed / Added Files
+- `apps/api/app/services/realtime/websocket_manager.py` (safe error logging, true LRU move_to_end, pre-validation dedup key extraction)
+- `apps/api/tests/test_websocket.py` (added caplog log security test, LRU recency/eviction test, and legacy fallback dedup test)
+- `README.md` (updated feature section to reflect implemented vs roadmap scope, updated test counts)
+- `docs/development-ledger.md` (this ledger entry)

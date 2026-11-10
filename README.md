@@ -8,15 +8,22 @@ Public transit riders often lack accurate, real-time information about vehicle l
 
 WaitWatch aims to solve this by ingesting standardized GTFS and GTFS-Realtime data, displaying live vehicle positions on an interactive map, and providing estimated arrival times based on real-time tracking and historical delay patterns.
 
-## Features (Planned)
+## Features
 
-> All features listed below are **planned** and not yet implemented. The project is currently in the foundation stage.
+### Implemented Functionality
 
-- 📍 **Route and stop exploration** — Browse transit routes and stops on an interactive map
-- 📅 **Static schedule display** — View trip schedules sourced from GTFS data
-- 🚌 **Live vehicle tracking** — See real-time vehicle positions via GTFS-Realtime feeds
-- ⏱️ **ETA predictions** — Get estimated arrival times using live vehicle positions and historical delay data
-- 🌍 **Multi-city support** — Configure different transit feeds to track multiple cities
+- 📍 **Route and stop exploration** — Feed-aware explorer to browse transit agencies, routes, and ordered stops.
+- 🗺️ **Interactive map visualization** — Feed-scoped Leaflet map displaying real GTFS route shapes, stops, and live vehicle markers.
+- ⏱️ **Real-time arrivals & ETA prediction** — Stop-level arrivals board combining scheduled stop times, GTFS-RT TripUpdates, and live vehicle positions with delay calculation.
+- ⚡ **Live WebSocket updates & pub/sub** — Instant UI refresh over feed-scoped WebSockets backed by PostgreSQL `LISTEN/NOTIFY`, with LRU deduplication and automatic fallback to 30-second steady-state REST polling.
+- 🔄 **GTFS & GTFS-Realtime ingestion** — Atomic ingestion pipelines for static GTFS archives (shapes, routes, stops, trips, calendar) and GTFS-RT vehicle positions and trip updates.
+- 🏙️ **Multi-feed configuration** — Database-backed feed registry for configuring independent transit feeds by city/agency with operational status management.
+
+### Future Roadmap
+
+- 🧭 **Multi-modal trip planning** — Turn-by-turn route planning between arbitrary locations (e.g. via Connection Scan Algorithm or RAPTOR).
+- ⭐ **User preferences & saved stops** — Bookmarks and favorites for frequent routes and stops.
+- ☁️ **Cloud deployment & multi-city production hosting** — Managed multi-region hosting and automated feed polling workers.
 
 ## Technology Stack
 
@@ -233,7 +240,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - React live update hook (`useFeedLiveUpdates`) with TanStack Query cache invalidation (`routeMap`, `arrivals`), active-tab visibility lifecycle management, exponential reconnect backoff, and seamless fallback to 30-second steady-state REST polling on disconnect, error, or hidden tabs (pauses redundant background polling while WebSocket is actively connected).
   - Accessible, responsive UI live status indicators (`● Live (WS)` vs `● Live (30s)` fallback vs `⏸ Paused` vs `⚠️ Stale`) across the dashboard, arrivals board, and interactive map view.
   - Protocol upgrade configuration in Vite development server proxy (`ws: true`) and Nginx reverse proxy (`map $http_upgrade $connection_upgrade` and `Upgrade`/`Connection` headers).
-  - Comprehensive test suite: 93 Vitest frontend tests across 7 files, and 149 Pytest backend tests across 11 files.
+  - Comprehensive test suite: 93 Vitest frontend tests across 7 files, and 152 Pytest backend tests across 11 files.
 
 ## License
 

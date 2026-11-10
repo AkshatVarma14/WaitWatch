@@ -1,6 +1,8 @@
 """Tests for feed-scoped WebSocket endpoints and live update notification pub/sub."""
 
 import asyncio
+import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -312,6 +314,83 @@ async def test_websocket_event_deduplication():
 
 
 @pytest.mark.asyncio
+async def test_websocket_manager_lru_recency_and_eviction():
+    """Verify true bounded LRU cache semantics (duplicate hits move key to MRU end)."""
+    manager = ConnectionManager(max_recent_events=2)
+
+    # Insert key1 and key2
+    assert manager._deduplicate_event("event-1") is False
+    assert manager._deduplicate_event("event-2") is False
+
+    # Access key1 again (hit): returns True and moves key1 to most-recently-used end
+    assert manager._deduplicate_event("event-1") is True
+
+    # Insert key3: cache exceeds max size 2, so LRU key (event-2) is evicted
+    assert manager._deduplicate_event("event-3") is False
+
+    # event-1 was recently accessed, so it should still be in cache (returns True)
+    assert manager._deduplicate_event("event-1") is True
+
+    # event-2 was evicted, so it is treated as a new event (returns False)
+    assert manager._deduplicate_event("event-2") is False
+
+
+@pytest.mark.asyncio
+async def test_websocket_manager_legacy_payload_fallback_deduplication():
+    """Verify legacy payloads lacking event_id deduplicate via fallback key."""
+    manager = ConnectionManager()
+
+    class MockWebSocket:
+        def __init__(self):
+            from starlette.websockets import WebSocketState
+
+            self.client_state = WebSocketState.CONNECTED
+            self.sent_messages: list[dict] = []
+
+        async def send_json(self, data: dict):
+            self.sent_messages.append(data)
+
+    mock_client = MockWebSocket()
+    await manager.connect("metro-city", mock_client)
+
+    legacy_payload = json.dumps(
+        {
+            "type": "feed_update",
+            "feed_id": 1,
+            "feed_slug": "metro-city",
+            "update_type": "vehicles",
+            "timestamp": "2026-11-10T12:00:00Z",
+            "vehicle_count": 8,
+        }
+    )
+
+    # First delivery: should succeed and broadcast
+    delivered1 = await manager.handle_db_notification(legacy_payload)
+    assert delivered1 == 1
+    assert len(mock_client.sent_messages) == 1
+
+    # Second delivery of identical legacy payload: deduplicated via fallback key
+    delivered2 = await manager.handle_db_notification(legacy_payload)
+    assert delivered2 == 0
+    assert len(mock_client.sent_messages) == 1
+
+    # Legacy payload with different timestamp: should be delivered
+    new_legacy_payload = json.dumps(
+        {
+            "type": "feed_update",
+            "feed_id": 1,
+            "feed_slug": "metro-city",
+            "update_type": "vehicles",
+            "timestamp": "2026-11-10T12:01:00Z",
+            "vehicle_count": 9,
+        }
+    )
+    delivered3 = await manager.handle_db_notification(new_legacy_payload)
+    assert delivered3 == 1
+    assert len(mock_client.sent_messages) == 2
+
+
+@pytest.mark.asyncio
 async def test_failed_ingestion_publishes_no_events(ws_test_db):
     """Ensure that on database failure, zero notifications are dispatched."""
     session_maker = ws_test_db
@@ -378,6 +457,51 @@ async def test_websocket_manager_handle_malformed_payload():
         trip_update_count=8,
     )
     await manager.handle_db_notification(valid_event.model_dump_json())
+
+
+@pytest.mark.asyncio
+async def test_websocket_manager_malformed_payload_does_not_log_sensitive_values(
+    caplog,
+):
+    """Ensure malformed payloads log error_type only, never sensitive contents."""
+    manager = ConnectionManager()
+    sensitive_token = "SECRET_API_TOKEN_xyz123"
+    sensitive_url = "https://private-user:secret-pass@transit-feed.internal/gtfs-rt"
+
+    # Malformed JSON containing sensitive token and URL
+    malformed_json = (
+        f'{{"feed_slug": "{sensitive_url}", "token": "{sensitive_token}", invalid json'
+    )
+    with caplog.at_level(logging.WARNING):
+        await manager.handle_db_notification(malformed_json)
+
+    assert (
+        "Discarding malformed or invalid database notification payload" in caplog.text
+    )
+    assert "error_type=JSONDecodeError" in caplog.text
+    assert sensitive_token not in caplog.text
+    assert sensitive_url not in caplog.text
+    assert "secret-pass" not in caplog.text
+
+    # Valid JSON but failing Pydantic validation with sensitive field value
+    invalid_schema_json = json.dumps(
+        {
+            "feed_slug": sensitive_url,
+            "secret_key": sensitive_token,
+            "type": "invalid_type_name",
+        }
+    )
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        await manager.handle_db_notification(invalid_schema_json)
+
+    assert (
+        "Discarding malformed or invalid database notification payload" in caplog.text
+    )
+    assert "error_type=ValidationError" in caplog.text
+    assert sensitive_token not in caplog.text
+    assert sensitive_url not in caplog.text
+    assert "secret-pass" not in caplog.text
 
 
 @pytest.mark.asyncio

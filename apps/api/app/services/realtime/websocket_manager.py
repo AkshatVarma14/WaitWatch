@@ -31,6 +31,8 @@ class ConnectionManager:
     def _deduplicate_event(self, event_key: str) -> bool:
         """Check if event_key was recently processed; if not, record it.
 
+        Maintains true bounded LRU (Least Recently Used) semantics:
+        duplicate hits move the key to the most-recently-used end.
         Returns True if duplicate (should be dropped), False if new (recorded).
         Caller should hold self._lock.
         """
@@ -38,6 +40,7 @@ class ConnectionManager:
             return False
         now = asyncio.get_event_loop().time()
         if event_key in self._recent_events:
+            self._recent_events.move_to_end(event_key)
             return True
         self._recent_events[event_key] = now
         while len(self._recent_events) > self._max_recent_events:
@@ -123,27 +126,40 @@ class ConnectionManager:
         """
         try:
             data = json.loads(payload)
-            event = FeedUpdateEvent.model_validate(data)
+            if not isinstance(data, dict):
+                logger.warning(
+                    "Discarding malformed or invalid database notification "
+                    "payload (error_type=TypeError)"
+                )
+                return 0
 
-            dedup_key = (
-                event.event_id
-                or f"{event.feed_slug}:{event.update_type}:{event.timestamp}"
-            )
+            # Derive dedup key from raw decoded payload before model validation
+            # so default_factory does not synthesize unique IDs for legacy payloads
+            raw_event_id = data.get("event_id")
+            if raw_event_id and isinstance(raw_event_id, str) and raw_event_id.strip():
+                dedup_key = raw_event_id.strip()
+            else:
+                slug = str(data.get("feed_slug") or "").strip()
+                utype = str(data.get("update_type") or "").strip()
+                ts = str(data.get("timestamp") or "").strip()
+                dedup_key = f"{slug}:{utype}:{ts}" if (slug and utype and ts) else ""
 
             async with self._lock:
-                if self._deduplicate_event(dedup_key):
+                if dedup_key and self._deduplicate_event(dedup_key):
                     logger.debug(
                         "Dropping duplicate feed update event '%s' for feed '%s'",
                         dedup_key,
-                        event.feed_slug,
+                        data.get("feed_slug"),
                     )
                     return 0
 
+            event = FeedUpdateEvent.model_validate(data)
             return await self.broadcast_to_feed(event.feed_slug, event.model_dump())
         except Exception as exc:
             logger.warning(
-                "Discarding malformed or invalid database notification payload: %s",
-                exc,
+                "Discarding malformed or invalid database notification "
+                "payload (error_type=%s)",
+                type(exc).__name__,
             )
             return 0
 
