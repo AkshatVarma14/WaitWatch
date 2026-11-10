@@ -505,6 +505,41 @@ async def test_websocket_manager_malformed_payload_does_not_log_sensitive_values
 
 
 @pytest.mark.asyncio
+async def test_websocket_manager_duplicate_drop_does_not_log_sensitive_values(
+    caplog,
+):
+    """Ensure duplicate drop debug logging emits constant message without raw fields."""
+    manager = ConnectionManager()
+    sensitive_feed_slug = "secret-feed-token-xyz789"
+    sensitive_event_id = "sensitive-event-id-key-456"
+
+    payload = json.dumps(
+        {
+            "type": "feed_update",
+            "event_id": sensitive_event_id,
+            "feed_id": 1,
+            "feed_slug": sensitive_feed_slug,
+            "update_type": "vehicles",
+            "timestamp": "2026-11-10T12:00:00Z",
+            "vehicle_count": 5,
+        }
+    )
+
+    # First delivery: records dedup_key
+    await manager.handle_db_notification(payload)
+
+    # Second delivery (duplicate): triggers duplicate drop branch
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        delivered = await manager.handle_db_notification(payload)
+
+    assert delivered == 0
+    assert "Dropping duplicate feed update notification" in caplog.text
+    assert sensitive_feed_slug not in caplog.text
+    assert sensitive_event_id not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_db_listener_non_postgres_skips_cleanly(monkeypatch):
     """Verify that run_db_listener exits cleanly when database is not PostgreSQL."""
     monkeypatch.setattr(

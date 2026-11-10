@@ -146,11 +146,7 @@ class ConnectionManager:
 
             async with self._lock:
                 if dedup_key and self._deduplicate_event(dedup_key):
-                    logger.debug(
-                        "Dropping duplicate feed update event '%s' for feed '%s'",
-                        dedup_key,
-                        data.get("feed_slug"),
-                    )
+                    logger.debug("Dropping duplicate feed update notification")
                     return 0
 
             event = FeedUpdateEvent.model_validate(data)

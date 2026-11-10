@@ -1016,3 +1016,30 @@ Addressed three targeted code review findings on the Stage 4.6 implementation:
 - `apps/api/tests/test_websocket.py` (added caplog log security test, LRU recency/eviction test, and legacy fallback dedup test)
 - `README.md` (updated feature section to reflect implemented vs roadmap scope, updated test counts)
 - `docs/development-ledger.md` (this ledger entry)
+
+### 2026-11-10 — Stage 4, Slice 4.6: Duplicate-Drop Log Safety Polish
+
+#### Overview
+Addressed a targeted log-safety review on the duplicate-event suppression path in `ConnectionManager.handle_db_notification`. The debug log statement previously interpolated `dedup_key` and `data.get("feed_slug")` (values derived from raw notification payloads prior to model validation). Replaced this with a constant debug message that emits zero raw or unvalidated notification fields.
+
+#### Key Deliverables & Test Verification
+1. **Constant Debug Message on Duplicate Drop** (`apps/api/app/services/realtime/websocket_manager.py`):
+   - Replaced `logger.debug("Dropping duplicate feed update event '%s' for feed '%s'", dedup_key, data.get("feed_slug"))` with constant `logger.debug("Dropping duplicate feed update notification")`.
+   - Prevents any sentinel tokens, URLs, or malicious strings in raw `event_id` or `feed_slug` payload fields from appearing in debug logs.
+2. **Focused Caplog Regression Test** (`apps/api/tests/test_websocket.py`):
+   - Added `test_websocket_manager_duplicate_drop_does_not_log_sensitive_values` with `caplog.at_level(logging.DEBUG)`.
+   - Injected synthetic sentinel values in `event_id` (`sensitive-event-id-key-456`) and `feed_slug` (`secret-feed-token-xyz789`).
+   - Verified that when the duplicate event is dropped, the constant message is emitted and neither sentinel value appears anywhere in the captured log text.
+
+#### Verification Evidence
+- **Backend Pytest**: 153 passed in 13.02s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint or formatting errors (`py -3.12 -m ruff check .; py -3.12 -m ruff format --check .`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall app tests`).
+- **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
+- **Secret Scan**: Clean, zero secrets detected.
+
+#### Changed Files
+- `apps/api/app/services/realtime/websocket_manager.py` (constant debug message on duplicate drop)
+- `apps/api/tests/test_websocket.py` (added caplog regression test for duplicate drop logging)
+- `README.md` (updated test suite count)
+- `docs/development-ledger.md` (this ledger entry)
