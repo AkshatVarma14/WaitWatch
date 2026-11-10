@@ -193,9 +193,10 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - GTFS-RT TripUpdate model (`TripUpdate`) and forward migration `0006_trip_updates` storing feed-scoped stop-time predictions and trip cancellations.
   - Protocol buffer parser (`parse_trip_updates`) with `DIFFERENTIAL` incrementality rejection, duplicate entity ID validation, timestamp bounds enforcement, and defensive handling of partial descriptors.
   - Ingestion service (`TripUpdateIngestionService`) with atomic snapshot replacement, feed isolation, and graceful skip when `realtime_trip_updates_url` is omitted.
+  - Combined poll lifecycle in `realtime-cli poll-vehicles`: fetches vehicle positions and configured TripUpdates in a single poll execution, while local `--file` mode remains fully offline without outbound network calls. Error isolation ensures failed TripUpdates download/parsing preserves previous snapshot state and does not lose processed vehicle observations. Retains `poll-trip-updates` as an operator fallback command.
   - Prediction service integration (`ArrivalPredictionService`): priority evaluation for `TRIP_UPDATE` prediction source, absolute event time precedence over delay (`time` > `delay`), departure fallback, trip cancellation (`CANCELED`) suppression, and skipped stop (`SKIPPED`) suppression, gracefully coexisting with vehicle positions and schedule fallbacks.
   - Frontend integration: `TRIP_UPDATE` prediction source formatting with prominent "Live TripUpdate" badge styling in `ArrivalsBoard`.
-  - Comprehensive test suite: 82 Vitest frontend tests across 6 files, and 132 Pytest backend tests across 10 files.
+  - Comprehensive test suite: 82 Vitest frontend tests across 6 files, and 136 Pytest backend tests across 10 files.
 
 ## License
 

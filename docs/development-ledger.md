@@ -695,11 +695,14 @@ Implemented the GTFS-Realtime TripUpdates ingestion pipeline, database persisten
    - Validated `FeedHeader`: requires valid version, enforces bounds on header timestamps, and rejects `DIFFERENTIAL` incrementality with `UnsupportedIncrementalityError` (only `FULL_DATASET` supported).
    - Validated `FeedEntity`: requires entity identifier, rejects duplicate entity IDs, and skips non-trip entities or deleted entities cleanly.
    - Validated `TripUpdate`: requires `trip_id`, validates timestamp bounds (< 2100 epoch seconds), parses arrival/departure events with delay and absolute POSIX times, and captures trip-level cancellations and general trip delays even when stop updates are omitted.
-3. **Atomic Ingestion Service & CLI Poller** (`apps/api/app/services/realtime/trip_update_service.py`, `apps/api/app/services/realtime/cli.py`):
+3. **Atomic Ingestion Service & Unified CLI Poller** (`apps/api/app/services/realtime/trip_update_service.py`, `apps/api/app/services/realtime/cli.py`):
    - Implemented `TripUpdateIngestionService.ingest_for_feed(...)`: downloads via `download_realtime_feed` using feed-configured API key environment variables without logging or exposing credentials.
    - Graceful skip: returns 0 without raising an error when a feed has no `realtime_trip_updates_url` configured.
    - Atomic replacement: deletes previous feed snapshot rows and bulk-inserts new ones in a single database transaction, rolling back on error and raising `RealtimePersistenceError`.
-   - Extended `realtime-cli` with `poll-trip-updates` subcommand supporting `--feed-id`, `--slug`, and `--file`.
+   - Integrated into existing `realtime-cli poll-vehicles` lifecycle: executing `poll-vehicles` runs vehicle positions first, then automatically ingests configured TripUpdates for the same feed.
+   - Offline safety: local `--file` mode operates purely offline on the supplied vehicle protobuf file and performs zero outbound network calls.
+   - Transaction error isolation: vehicle positions and deduplicated observations commit first; if TripUpdates download/parsing fails, the error is isolated, logged as a warning, and previous trip update snapshot state is preserved without losing vehicle positions.
+   - Retained `poll-trip-updates` as an operator fallback subcommand sharing `TripUpdateIngestionService`.
 4. **ETA Prediction Engine Integration** (`apps/api/app/services/prediction/service.py`, `apps/api/app/schemas/transit.py`):
    - Updated `ArrivalPredictionService.predict_arrivals_for_stop`: queries fresh `TripUpdate` records alongside `VehiclePosition` records within the 300s freshness window.
    - Precedence: when a trip has a matching `TripUpdate` for the target stop, uses prediction source `"TRIP_UPDATE"` directly from agency dispatch. Absolute event times (`time`) take strict precedence over relative delays (`delay`).
@@ -710,11 +713,11 @@ Implemented the GTFS-Realtime TripUpdates ingestion pipeline, database persisten
    - Formatted `"TRIP_UPDATE"` with a distinct "Live TripUpdate" emerald badge (`bg-emerald-900/60 text-emerald-300 border border-emerald-700/60`) and passenger-facing tooltip description.
    - Rendered in `ArrivalsBoard` with scheduled time, estimated time, delay badges, and observation age.
 6. **Comprehensive Unit & Integration Test Suites**:
-   - Backend Pytest (132 tests total across 10 files): 17 new tests in `test_trip_updates.py` covering protobuf parsing, error cases, missing header, differential rejection, duplicate entities, ingestion idempotency, feed isolation, CLI polling, stop arrival predictions with precedence and cancellation suppression, and stale telemetry handling; updated `test_models.py` and `test_alembic.py`.
+   - Backend Pytest (136 tests total across 10 files): 21 tests in `test_trip_updates.py` covering protobuf parsing, error cases, missing header, differential rejection, duplicate entities, ingestion idempotency, feed isolation, combined `poll-vehicles` invocation of both ingest paths, skipping when unconfigured, offline `--file` mode safety, error isolation preserving vehicle observations on trip update failure, standalone CLI polling, stop arrival predictions with precedence and cancellation suppression, and stale telemetry handling; updated `test_models.py` and `test_alembic.py`.
    - Frontend Vitest (82 tests total across 6 files): tested `"TRIP_UPDATE"` formatting and live arrival card rendering in `TransitExplorer.test.tsx` and `formatters.test.ts`.
 
 #### Verification Evidence
-- **Backend Pytest**: 132 passed in 14.55s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Pytest**: 136 passed in 14.8s (`cd apps/api && py -3.12 -m pytest`).
 - **Backend Ruff**: Zero errors, 62 files formatted cleanly (`py -3.12 -m ruff check app tests alembic`, `py -3.12 -m ruff format --check app tests alembic`).
 - **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall app tests alembic`).
 - **Alembic Migrations**: Static SQL upgrade and downgrade verified without error (`0006_trip_updates`).

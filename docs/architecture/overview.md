@@ -250,14 +250,14 @@ Vehicle Positions + Schedule Data + Historical Delays
 - Complete GTFS Static database schema, migrations 0001–0006 (`0006_trip_updates` for GTFS-RT trip updates), and ingestion pipeline
 - Transit Query REST API for feeds, routes, stops, nearby geospatial queries, and route map visualization (`/api/v1/feeds/{feed_slug}/routes/{route_id}/map`)
 - GTFS-Realtime vehicle position ingestion, snapshot storage, and deduplicated historical observations
-- GTFS-Realtime TripUpdates ingestion (`TripUpdateIngestionService`, `parse_trip_updates`, `trip_updates` snapshot table), atomic snapshot replacement, and CLI poller
+- GTFS-Realtime TripUpdates ingestion (`TripUpdateIngestionService`, `parse_trip_updates`, `trip_updates` snapshot table), atomic snapshot replacement, and combined poll execution (`realtime-cli poll-vehicles`) fetching vehicle positions and configured TripUpdates in a single poll lifecycle with full error isolation and offline `--file` support
 - Stop Arrival Prediction & ETA Engine (`GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`) with `TRIP_UPDATE` prediction source, absolute time precedence (`time` > `delay`), departure fallback, trip cancellation (`CANCELED`) suppression, and skipped stop (`SKIPPED`) suppression
 - Frontend Feed-Aware Transit Explorer & Live Arrivals Board (`apps/web` with React, TypeScript, TanStack Query, Zustand, and Tailwind) displaying "Live TripUpdate" badges
 - Interactive route and vehicle map visualization (`MapView` with Leaflet) rendering true GTFS shape polylines, ordered stop markers, and bearing-rotated live vehicles with configurable tile provider and strict missing-shape warnings (no fabricated geometry)
 - Accessible route selector combobox (`RouteSelector`) and stop/vehicle navigator panel (`MapDetailsPanel`)
 - Real-time client polling architecture with 30-second interval, document visibility tracking (`useDocumentVisibility`, `usePollingVisibilityRefresh`), transient error handling preserving last successful data with "⚠️ Stale" status, and stable map viewports avoiding automated tile requests
 - Strict feed and route isolation across all frontend selections and API queries
-- 82 frontend tests (Vitest across 6 files) and 132 backend tests (Pytest across 10 files) passing cleanly in local and CI runs
+- 82 frontend tests (Vitest across 6 files) and 136 backend tests (Pytest across 10 files) passing cleanly in local and CI runs
 
 Subsequent planned work:
 - GTFS-Realtime TripUpdates ingestion

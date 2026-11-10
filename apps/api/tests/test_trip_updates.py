@@ -3,6 +3,7 @@
 import argparse
 from collections.abc import AsyncGenerator
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,7 +26,10 @@ from app.models import (
     VehiclePosition,
 )
 from app.services.prediction.service import ArrivalPredictionService
-from app.services.realtime.cli import run_poll_trip_updates
+from app.services.realtime.cli import (
+    run_poll_trip_updates,
+    run_poll_vehicles,
+)
 from app.services.realtime.exceptions import (
     RealtimeParseError,
     UnsupportedIncrementalityError,
@@ -34,6 +38,7 @@ from app.services.realtime.parser import (
     ParsedTripUpdatesFeed,
     parse_trip_updates,
 )
+from app.services.realtime.service import VehiclePositionIngestionService
 from app.services.realtime.trip_update_service import TripUpdateIngestionService
 
 
@@ -571,6 +576,277 @@ async def test_trip_update_cli_poll_success() -> None:
         args = argparse.Namespace(feed_id=None, slug="cli-city", file=None)
         exit_code = await run_poll_trip_updates(args)
         assert exit_code == 0
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_poll_vehicles_invokes_both_ingest_paths_when_configured() -> None:
+    """Verify poll-vehicles fetches both positions and trip updates when configured."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with session_maker() as session:
+        feed = TransitFeed(
+            city_name="Dual Poll City",
+            slug="dual-poll-city",
+            static_gtfs_url="https://example.com/gtfs.zip",
+            realtime_vehicle_positions_url="https://example.com/vp.pb",
+            realtime_trip_updates_url="https://example.com/tu.pb",
+        )
+        session.add(feed)
+        await session.commit()
+        feed_id = feed.id
+
+    mock_vp_ingest = AsyncMock(return_value=5)
+    mock_tu_ingest = AsyncMock(return_value=12)
+
+    with (
+        patch(
+            "app.services.realtime.cli.async_session_factory",
+            return_value=session_maker(),
+        ),
+        patch.object(
+            VehiclePositionIngestionService,
+            "ingest_for_feed",
+            mock_vp_ingest,
+        ),
+        patch.object(
+            TripUpdateIngestionService,
+            "ingest_for_feed",
+            mock_tu_ingest,
+        ),
+    ):
+        args = argparse.Namespace(feed_id=feed_id, slug=None, file=None)
+        exit_code = await run_poll_vehicles(args)
+        assert exit_code == 0
+        assert mock_vp_ingest.await_count == 1
+        assert mock_tu_ingest.await_count == 1
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_poll_vehicles_skips_trip_updates_when_no_url() -> None:
+    """Verify poll-vehicles cleanly skips trip updates when URL is not configured."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with session_maker() as session:
+        feed = TransitFeed(
+            city_name="VP Only City",
+            slug="vp-only-city",
+            static_gtfs_url="https://example.com/gtfs.zip",
+            realtime_vehicle_positions_url="https://example.com/vp.pb",
+            realtime_trip_updates_url=None,
+        )
+        session.add(feed)
+        await session.commit()
+        feed_id = feed.id
+
+    mock_vp_ingest = AsyncMock(return_value=4)
+    mock_tu_ingest = AsyncMock(return_value=0)
+
+    with (
+        patch(
+            "app.services.realtime.cli.async_session_factory",
+            return_value=session_maker(),
+        ),
+        patch.object(
+            VehiclePositionIngestionService,
+            "ingest_for_feed",
+            mock_vp_ingest,
+        ),
+        patch.object(
+            TripUpdateIngestionService,
+            "ingest_for_feed",
+            mock_tu_ingest,
+        ),
+    ):
+        args = argparse.Namespace(feed_id=feed_id, slug=None, file=None)
+        exit_code = await run_poll_vehicles(args)
+        assert exit_code == 0
+        assert mock_vp_ingest.await_count == 1
+        assert mock_tu_ingest.await_count == 0
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_poll_vehicles_local_file_mode_makes_no_outbound_calls(
+    tmp_path: Path,
+) -> None:
+    """Verify local --file mode is fully offline and does not call network endpoints."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with session_maker() as session:
+        feed = TransitFeed(
+            city_name="File Mode City",
+            slug="file-mode-city",
+            static_gtfs_url="https://example.com/gtfs.zip",
+            realtime_vehicle_positions_url="https://example.com/vp.pb",
+            realtime_trip_updates_url="https://example.com/tu.pb",
+        )
+        session.add(feed)
+        await session.commit()
+        feed_id = feed.id
+
+    dummy_file = tmp_path / "offline_vehicles.pb"
+    dummy_file.write_bytes(b"dummy_payload")
+
+    mock_vp_ingest = AsyncMock(return_value=3)
+    mock_tu_ingest = AsyncMock(
+        side_effect=AssertionError("TripUpdate must not run in file mode")
+    )
+    mock_download = AsyncMock(
+        side_effect=AssertionError("No network download in file mode")
+    )
+
+    with (
+        patch(
+            "app.services.realtime.cli.async_session_factory",
+            return_value=session_maker(),
+        ),
+        patch.object(
+            VehiclePositionIngestionService,
+            "ingest_for_feed",
+            mock_vp_ingest,
+        ),
+        patch.object(
+            TripUpdateIngestionService,
+            "ingest_for_feed",
+            mock_tu_ingest,
+        ),
+        patch(
+            "app.services.realtime.downloader.download_realtime_feed",
+            mock_download,
+        ),
+    ):
+        args = argparse.Namespace(feed_id=feed_id, slug=None, file=str(dummy_file))
+        exit_code = await run_poll_vehicles(args)
+        assert exit_code == 0
+        assert mock_vp_ingest.await_count == 1
+        assert mock_tu_ingest.await_count == 0
+        assert mock_download.await_count == 0
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_poll_vehicles_trip_updates_failure_preserves_previous_state() -> None:
+    """Verify TripUpdates failure preserves previous state and vehicle poll outcome."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with session_maker() as session:
+        feed = TransitFeed(
+            city_name="Resilience City",
+            slug="resilience-city",
+            static_gtfs_url="https://example.com/gtfs.zip",
+            realtime_vehicle_positions_url="https://example.com/vp.pb",
+            realtime_trip_updates_url="https://example.com/tu.pb",
+        )
+        session.add(feed)
+        await session.flush()
+
+        # Pre-seed an existing TripUpdate from a previous poll
+        prior_tu = TripUpdate(
+            feed_id=feed.id,
+            entity_id="TU_PRIOR",
+            trip_id="TRIP_PRIOR",
+            route_id="R1",
+            stop_id="STOP_1",
+            arrival_delay=60,
+        )
+        session.add(prior_tu)
+        await session.commit()
+        feed_id = feed.id
+
+    # Vehicle position ingestion succeeds and writes a vehicle position row
+    async def mock_vp_success(
+        session: AsyncSession, f: TransitFeed, **kwargs: object
+    ) -> int:
+        vp = VehiclePosition(
+            feed_id=f.id,
+            entity_id="V_NEW",
+            latitude=40.71,
+            longitude=-74.01,
+            trip_id="TRIP_NEW",
+        )
+        session.add(vp)
+        await session.commit()
+        return 1
+
+    # TripUpdate ingestion fails with an error
+    mock_tu_fail = AsyncMock(
+        side_effect=RealtimeParseError("Corrupted trip update protobuf")
+    )
+
+    with (
+        patch(
+            "app.services.realtime.cli.async_session_factory",
+            return_value=session_maker(),
+        ),
+        patch.object(
+            VehiclePositionIngestionService,
+            "ingest_for_feed",
+            side_effect=mock_vp_success,
+        ),
+        patch.object(
+            TripUpdateIngestionService,
+            "ingest_for_feed",
+            mock_tu_fail,
+        ),
+    ):
+        args = argparse.Namespace(feed_id=feed_id, slug=None, file=None)
+        exit_code = await run_poll_vehicles(args)
+        # Primary vehicle poll succeeded, error isolation keeps exit code 0
+        assert exit_code == 0
+
+    # Verify state in database:
+    async with session_maker() as session:
+        # Prior TripUpdate is preserved
+        tu_rows = (
+            (
+                await session.execute(
+                    select(TripUpdate).where(TripUpdate.feed_id == feed_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(tu_rows) == 1
+        assert tu_rows[0].trip_id == "TRIP_PRIOR"
+
+        # Vehicle position from successful poll was committed
+        vp_rows = (
+            (
+                await session.execute(
+                    select(VehiclePosition).where(VehiclePosition.feed_id == feed_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(vp_rows) == 1
+        assert vp_rows[0].entity_id == "V_NEW"
 
     await engine.dispose()
 

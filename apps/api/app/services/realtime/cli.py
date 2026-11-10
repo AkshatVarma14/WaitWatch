@@ -21,7 +21,7 @@ logger = logging.getLogger("realtime-cli")
 
 
 async def run_poll_vehicles(args: argparse.Namespace) -> int:
-    """Execute vehicle position polling from CLI arguments."""
+    """Execute realtime polling for vehicle positions and configured trip updates."""
     async with async_session_factory() as session:
         feed = None
         if args.feed_id is not None:
@@ -42,7 +42,7 @@ async def run_poll_vehicles(args: argparse.Namespace) -> int:
             )
             return 1
 
-        raw_bytes: bytes | None = None
+        # Local file mode: strictly offline, ingests only the provided file
         if args.file:
             path = Path(args.file)
             if not path.is_file():
@@ -51,19 +51,67 @@ async def run_poll_vehicles(args: argparse.Namespace) -> int:
             logger.info("Reading protobuf payload from file: %s", path)
             raw_bytes = path.read_bytes()
 
-        service = VehiclePositionIngestionService()
+            service = VehiclePositionIngestionService()
+            try:
+                count = await service.ingest_for_feed(
+                    session, feed, raw_bytes=raw_bytes
+                )
+                logger.info("=" * 60)
+                logger.info("GTFS-Realtime offline vehicle position import successful!")
+                logger.info("  Feed:              %s (%s)", feed.city_name, feed.slug)
+                logger.info("  Vehicles Ingested: %d", count)
+                logger.info("  Last Poll At:      %s", feed.last_realtime_poll_at)
+                logger.info("=" * 60)
+                return 0
+            except Exception as exc:
+                logger.error("Offline vehicle position import failed: %s", exc)
+                return 1
+
+        # Online poll cycle: fetch vehicle positions and configured trip updates
+        vp_service = VehiclePositionIngestionService()
         try:
-            count = await service.ingest_for_feed(session, feed, raw_bytes=raw_bytes)
-            logger.info("=" * 60)
-            logger.info("GTFS-Realtime vehicle position poll successful!")
-            logger.info("  Feed:              %s (%s)", feed.city_name, feed.slug)
-            logger.info("  Vehicles Ingested: %d", count)
-            logger.info("  Last Poll At:      %s", feed.last_realtime_poll_at)
-            logger.info("=" * 60)
-            return 0
+            vp_count = await vp_service.ingest_for_feed(session, feed)
         except Exception as exc:
-            logger.error("Vehicle position poll failed: %s", exc)
+            logger.error(
+                "Vehicle position poll failed for feed '%s': %s", feed.slug, exc
+            )
             return 1
+
+        # If feed has realtime_trip_updates_url, ingest trip updates in same cycle
+        tu_count: int | None = None
+        tu_error: str | None = None
+        if feed.realtime_trip_updates_url:
+            tu_service = TripUpdateIngestionService()
+            try:
+                tu_count = await tu_service.ingest_for_feed(session, feed)
+            except Exception as exc:
+                tu_error = str(exc)
+                logger.warning(
+                    "Trip update ingestion failed for feed '%s': %s "
+                    "(vehicle observations preserved)",
+                    feed.slug,
+                    exc,
+                )
+
+        logger.info("=" * 60)
+        logger.info("GTFS-Realtime poll cycle successful!")
+        logger.info("  Feed:              %s (%s)", feed.city_name, feed.slug)
+        logger.info("  Vehicles Ingested: %d", vp_count)
+        if feed.realtime_trip_updates_url:
+            if tu_error is not None:
+                logger.info(
+                    "  Trip Updates:      failed (%s, vehicle data preserved)",
+                    tu_error,
+                )
+            else:
+                logger.info("  Trip Updates:      %d ingested", tu_count or 0)
+        else:
+            logger.info(
+                "  Trip Updates:      skipped (no realtime_trip_updates_url configured)"
+            )
+        logger.info("  Last Poll At:      %s", feed.last_realtime_poll_at)
+        logger.info("=" * 60)
+        return 0
 
 
 async def run_poll_trip_updates(args: argparse.Namespace) -> int:
@@ -116,25 +164,25 @@ def main() -> None:
     """CLI entrypoint."""
     parser = argparse.ArgumentParser(
         prog="realtime-cli",
-        description="WaitWatch GTFS-Realtime Vehicle Positions CLI",
+        description="WaitWatch GTFS-Realtime Polling CLI",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     poll_parser = subparsers.add_parser(
         "poll-vehicles",
-        help="Poll or ingest vehicle positions for a feed",
+        help="Poll vehicle positions and configured trip updates for a feed",
     )
     poll_parser.add_argument("--feed-id", type=int, help="Internal transit feed ID")
     poll_parser.add_argument("--slug", type=str, help="Feed slug / city identifier")
     poll_parser.add_argument(
         "--file",
         type=str,
-        help="Optional path to local serialized protobuf FeedMessage file",
+        help="Optional path to local serialized vehicle positions FeedMessage file",
     )
 
     tu_parser = subparsers.add_parser(
         "poll-trip-updates",
-        help="Poll or ingest trip updates for a feed",
+        help="Fallback operator poller for trip updates only",
     )
     tu_parser.add_argument("--feed-id", type=int, help="Internal transit feed ID")
     tu_parser.add_argument("--slug", type=str, help="Feed slug / city identifier")
