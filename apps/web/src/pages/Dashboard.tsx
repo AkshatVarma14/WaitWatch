@@ -4,8 +4,16 @@ import { MapDetailsPanel } from "../components/mapDetailsPanel";
 import { MapView } from "../components/mapView";
 import { RouteSelector } from "../components/routeSelector";
 import { StopSearch } from "../components/stopSearch";
+import { useFeedLiveUpdates } from "../lib/useFeedLiveUpdates";
+import { useAppStore } from "../stores/appStore";
 
 export function Dashboard() {
+  const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
+  const liveStatus = useAppStore((state) => state.liveStatus);
+
+  // Subscribe to feed-scoped WebSocket live transit updates
+  useFeedLiveUpdates(selectedFeedSlug);
+
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col font-sans">
       {/* Top Application Header */}
@@ -25,6 +33,36 @@ export function Dashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2 text-xs text-gray-400">
+            {selectedFeedSlug && (
+              <span
+                role="status"
+                aria-label={`Live status: ${liveStatus}`}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
+                  liveStatus === "connected"
+                    ? "bg-emerald-950/70 text-emerald-300 border-emerald-800"
+                    : liveStatus === "fallback"
+                      ? "bg-blue-950/70 text-blue-300 border-blue-800"
+                      : "bg-gray-900 text-gray-400 border-gray-800"
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    liveStatus === "connected"
+                      ? "bg-emerald-400 animate-pulse"
+                      : liveStatus === "fallback"
+                        ? "bg-blue-400 animate-pulse"
+                        : "bg-gray-500"
+                  }`}
+                />
+                {liveStatus === "connected"
+                  ? "Live (WS)"
+                  : liveStatus === "fallback"
+                    ? "Live (30s)"
+                    : liveStatus === "paused"
+                      ? "Paused"
+                      : "Connecting..."}
+              </span>
+            )}
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-900 border border-gray-800">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               Stage 4: Map & Transit Explorer

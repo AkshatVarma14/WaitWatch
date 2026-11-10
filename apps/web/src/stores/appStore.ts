@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { StopSummary } from "../types/transit";
+import type { LiveConnectionStatus, StopSummary } from "../types/transit";
 
 export interface AppState {
   /** Currently selected transit feed slug */
@@ -17,6 +17,12 @@ export interface AppState {
   /** Backwards-compatible alias for selected city / feed slug */
   selectedCity: string | null;
 
+  /** Current real-time live connection status */
+  liveStatus: LiveConnectionStatus;
+
+  /** Timestamp of the most recent real-time update event */
+  lastLiveUpdateAt: string | null;
+
   /** Update selected feed slug (enforces feed isolation by resetting route, stop, and vehicle) */
   setSelectedFeedSlug: (slug: string | null) => void;
 
@@ -32,6 +38,12 @@ export interface AppState {
   /** Backwards-compatible alias for setSelectedFeedSlug */
   setSelectedCity: (city: string | null) => void;
 
+  /** Set live connection status */
+  setLiveStatus: (status: LiveConnectionStatus) => void;
+
+  /** Set timestamp of the most recent real-time update event */
+  setLastLiveUpdateAt: (timestamp: string | null) => void;
+
   /** Reset all selections */
   reset: () => void;
 }
@@ -42,15 +54,19 @@ export const useAppStore = create<AppState>((set) => ({
   selectedStop: null,
   selectedVehicleId: null,
   selectedCity: null,
+  liveStatus: "disconnected",
+  lastLiveUpdateAt: null,
 
   setSelectedFeedSlug: (slug) =>
     set({
       selectedFeedSlug: slug,
       selectedCity: slug,
-      // Feed isolation: changing feed clears previously selected route, stop, and vehicle
+      // Feed isolation: changing feed clears previously selected route, stop, vehicle, and live connection
       selectedRouteId: null,
       selectedStop: null,
       selectedVehicleId: null,
+      liveStatus: "disconnected",
+      lastLiveUpdateAt: null,
     }),
 
   setSelectedRouteId: (routeId) =>
@@ -76,6 +92,18 @@ export const useAppStore = create<AppState>((set) => ({
       selectedRouteId: null,
       selectedStop: null,
       selectedVehicleId: null,
+      liveStatus: "disconnected",
+      lastLiveUpdateAt: null,
+    }),
+
+  setLiveStatus: (status) =>
+    set({
+      liveStatus: status,
+    }),
+
+  setLastLiveUpdateAt: (timestamp) =>
+    set({
+      lastLiveUpdateAt: timestamp,
     }),
 
   reset: () =>
@@ -85,5 +113,7 @@ export const useAppStore = create<AppState>((set) => ({
       selectedStop: null,
       selectedVehicleId: null,
       selectedCity: null,
+      liveStatus: "disconnected",
+      lastLiveUpdateAt: null,
     }),
 }));

@@ -231,6 +231,16 @@ Vehicle Positions + Schedule Data + Historical Delays
     WebSocket Broadcast → Connected Clients
 ```
 
+### 5. WebSocket Live Updates & PostgreSQL Pub/Sub — `Implemented (Slice 4.6)`
+
+Provides real-time event notifications to connected frontend clients when new transit snapshots are ingested:
+- **Zero-Broker Architecture**: Uses PostgreSQL native `LISTEN/NOTIFY` on channel `waitwatch_feed_updates` to coordinate update notifications across backend API processes without requiring Redis or an external message broker.
+- **Atomic Notification Staging**: Notification execution (`publish_feed_update`) is staged within the active database transaction. PostgreSQL guarantees notifications are delivered if and only if the transaction commits; rolled back or failed transactions emit zero notifications.
+- **Dedicated Database Listener**: Single managed `asyncpg` listener (`run_db_listener`) per API process started via FastAPI lifespan, reconnecting with exponential backoff on disconnects without interrupting REST API service. Gracefully disabled when running on SQLite.
+- **Feed-Scoped WebSocket Endpoint**: `/api/v1/feeds/{feed_slug}/ws` verifies the feed slug against the database, rejects unknown feeds with WebSocket policy violation code 1008, acknowledges connections, and responds to ping heartbeats.
+- **Thread-Safe Connection Manager**: `ConnectionManager` isolates client sets per feed, prunes closed or broken connections on broadcast failure, enforces capacity bounds, and gracefully closes sockets on process shutdown.
+- **Client Cache Synchronization**: React hook (`useFeedLiveUpdates`) receives lightweight `FeedUpdateEvent` payloads and invalidates matching TanStack Query caches (`["routeMap", feedSlug]` and `["arrivals", feedSlug]`). Pauses redundant 30-second polling while connected, and seamlessly falls back to steady-state polling on disconnect, error, or hidden tabs.
+
 ## Technology Rationale
 
 | Technology | Rationale |
@@ -310,7 +320,7 @@ While the Docker Compose stack provides a robust foundation for local developmen
 
 ## Current Status
 
-**Stages 0 through 4 are complete and verified across all roadmap slices (4.1 through 4.5)**:
+**Stages 0 through 4 are complete and verified across all roadmap slices (4.1 through 4.5 and follow-up Slice 4.6)**:
 
 - Full monorepo repository structure, Docker Compose stack (`db`, `migrate`, `api`, `web`), and CI/CD pipelines
 - Complete GTFS Static database schema, migrations 0001–0006 (`0006_trip_updates`), and ingestion pipeline
@@ -323,10 +333,10 @@ While the Docker Compose stack provides a robust foundation for local developmen
 - Accessible route selector combobox (`RouteSelector`) and stop/vehicle navigator panel (`MapDetailsPanel`)
 - Real-time client polling architecture with 30-second interval, document visibility tracking (`useDocumentVisibility`, `usePollingVisibilityRefresh`), transient error handling preserving last successful data with "⚠️ Stale" status, and stable map viewports avoiding automated tile requests
 - Production-ready Docker Compose scaffolding (`docker-compose.yml`, `apps/api/Dockerfile`, `apps/web/Dockerfile`, `apps/web/nginx.conf`, `.env.example`) with pinned images, healthchecks, unprivileged users, automated Alembic migration runner, and reverse proxying
+- Core WebSocket live updates via feed-scoped WebSocket endpoints, PostgreSQL native `LISTEN/NOTIFY` pub/sub, managed background listener with backoff reconnection, automatic TanStack Query cache invalidation (`routeMap`, `arrivals`), active-tab visibility management, and seamless fallback to 30-second steady-state polling on disconnect, error, or hidden tabs
 - Strict feed and route isolation across all frontend selections and API queries
-- 83 frontend tests (Vitest across 6 files) and 138 backend tests (Pytest across 10 files) passing cleanly in local and CI runs
+- 92 frontend tests (Vitest across 7 files) and 147 backend tests (Pytest across 11 files) passing cleanly in local and CI runs
 
 Subsequent planned roadmap work:
-- WebSocket live vehicle and ETA streaming
 - Turn-by-turn route navigation / trip planning
 - User preferences, favorite stops, and saved routes

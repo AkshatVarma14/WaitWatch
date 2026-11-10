@@ -18,6 +18,7 @@ import type { StopArrivalPrediction } from "../types/transit";
 export function ArrivalsBoard() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
   const selectedStop = useAppStore((state) => state.selectedStop);
+  const liveStatus = useAppStore((state) => state.liveStatus);
 
   const pollingInterval = getPollingIntervalMs();
   const isPollingEnabled = Boolean(selectedFeedSlug && selectedStop);
@@ -36,7 +37,8 @@ export function ArrivalsBoard() {
     queryFn: () => fetchArrivals(selectedFeedSlug!, selectedStop!.stop_id),
     enabled: isPollingEnabled,
     refetchInterval: () => {
-      if (!isPollingEnabled || !isVisible) {
+      // Pause redundant 30s background polling when feed WebSocket is actively connected
+      if (!isPollingEnabled || !isVisible || liveStatus === "connected") {
         return false;
       }
       return pollingInterval;
@@ -106,7 +108,7 @@ export function ArrivalsBoard() {
               <span
                 role="status"
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 text-[11px]"
-                title="Polling paused while window/tab is hidden"
+                title="Live updates paused while window/tab is hidden"
               >
                 ⏸ Paused
               </span>
@@ -117,6 +119,15 @@ export function ArrivalsBoard() {
                 title="Live refresh encountered an error; displaying last successful data"
               >
                 ⚠️ Stale
+              </span>
+            ) : liveStatus === "connected" ? (
+              <span
+                role="status"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800 text-[11px]"
+                title="Live real-time updates active via feed WebSocket"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live (WS)
               </span>
             ) : (
               <span

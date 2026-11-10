@@ -127,3 +127,20 @@ export interface PaginatedResponse<T> {
   data: T[];
   pagination: PaginationMeta;
 }
+
+export interface FeedUpdateEvent {
+  type: "feed_update";
+  feed_id: number;
+  feed_slug: string;
+  update_type: "vehicles" | "trip_updates" | "all";
+  timestamp: string;
+  vehicle_count?: number | null;
+  trip_update_count?: number | null;
+}
+
+export type LiveConnectionStatus =
+  | "connected"
+  | "connecting"
+  | "disconnected"
+  | "fallback"
+  | "paused";

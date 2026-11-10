@@ -14,6 +14,52 @@ export const API_BASE_URL =
     ? configuredApiUrl.replace(/\/+$/, "")
     : "http://localhost:8000";
 
+/**
+ * Return the WebSocket base URL derived from the configured API URL or browser origin.
+ *
+ * Rules:
+ * - If VITE_API_URL is configured, convert http: to ws: and https: to wss:.
+ * - Never use internal container DNS names (such as "api:8000") in browser code;
+ *   fall back to window.location if an internal hostname is encountered.
+ * - If VITE_API_URL is not configured and running in a browser, derive from window.location.
+ * - In non-browser environments without VITE_API_URL, default to ws://localhost:8000.
+ */
+export function getWsBaseUrl(): string {
+  const configured =
+    typeof configuredApiUrl === "string" ? configuredApiUrl.trim() : "";
+  if (
+    configured &&
+    !configured.includes("://api:") &&
+    !configured.includes("://api/") &&
+    configured !== "http://api" &&
+    configured !== "https://api"
+  ) {
+    const trimmed = configured.replace(/\/+$/, "");
+    if (trimmed.startsWith("https://")) {
+      return trimmed.replace(/^https:\/\//, "wss://");
+    }
+    if (trimmed.startsWith("http://")) {
+      return trimmed.replace(/^http:\/\//, "ws://");
+    }
+    return trimmed;
+  }
+
+  if (typeof window !== "undefined" && window.location?.host) {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${window.location.host}`;
+  }
+
+  return "ws://localhost:8000";
+}
+
+/**
+ * Return the feed-scoped WebSocket endpoint URL.
+ */
+export function getFeedWebSocketUrl(feedSlug: string): string {
+  const wsBase = getWsBaseUrl();
+  return `${wsBase}/api/v1/feeds/${encodeURIComponent(feedSlug)}/ws`;
+}
+
 export async function fetchApi<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);
   if (!response.ok) {

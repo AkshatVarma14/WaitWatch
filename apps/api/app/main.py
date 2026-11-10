@@ -1,5 +1,6 @@
 """WaitWatch API — FastAPI application entry point."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,8 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 from app.api.router import api_router
 from app.core.config import settings
 from app.database.session import engine
+from app.services.realtime.db_listener import run_db_listener
+from app.services.realtime.websocket_manager import ws_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,8 +30,17 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         settings.environment,
         settings.sanitized_database_url,
     )
+    stop_event = asyncio.Event()
+    listener_task = asyncio.create_task(run_db_listener(ws_manager, stop_event))
     yield
     logger.info("WaitWatch API shutting down")
+    stop_event.set()
+    listener_task.cancel()
+    try:
+        await asyncio.wait_for(listener_task, timeout=2.0)
+    except (TimeoutError, asyncio.CancelledError):
+        pass
+    await ws_manager.close_all()
     await engine.dispose()
 
 

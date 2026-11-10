@@ -23,6 +23,7 @@ export function MapView() {
   const setSelectedStop = useAppStore((state) => state.setSelectedStop);
   const selectedVehicleId = useAppStore((state) => state.selectedVehicleId);
   const setSelectedVehicleId = useAppStore((state) => state.setSelectedVehicleId);
+  const liveStatus = useAppStore((state) => state.liveStatus);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -47,7 +48,8 @@ export function MapView() {
     queryFn: () => fetchRouteMap(selectedFeedSlug!, selectedRouteId!),
     enabled: isPollingEnabled,
     refetchInterval: () => {
-      if (!isPollingEnabled || !isVisible) {
+      // Pause redundant 30s background polling when feed WebSocket is actively connected
+      if (!isPollingEnabled || !isVisible || liveStatus === "connected") {
         return false;
       }
       return pollingInterval;
@@ -270,7 +272,7 @@ export function MapView() {
                 <span
                   role="status"
                   className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700"
-                  title="Polling paused while window/tab is hidden"
+                  title="Live updates paused while window/tab is hidden"
                 >
                   ⏸ Paused
                 </span>
@@ -281,6 +283,15 @@ export function MapView() {
                   title="Live refresh encountered an error; displaying last successful data"
                 >
                   ⚠️ Stale
+                </span>
+              ) : liveStatus === "connected" ? (
+                <span
+                  role="status"
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800"
+                  title="Live real-time updates active via feed WebSocket"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live (WS)
                 </span>
               ) : (
                 <span

@@ -8,6 +8,8 @@ import {
   fetchRouteMap,
   fetchRoutes,
   fetchStops,
+  getFeedWebSocketUrl,
+  getWsBaseUrl,
 } from "../lib/api";
 
 describe("api client", () => {
@@ -195,5 +197,20 @@ describe("api client", () => {
 
     const res = await fetchHealth();
     expect(res).toEqual(mockHealth);
+  });
+
+  it("getWsBaseUrl returns a valid ws or wss base URL", () => {
+    const wsBase = getWsBaseUrl();
+    expect(wsBase).toMatch(/^wss?:\/\//);
+    expect(wsBase).not.toMatch(/\/$/);
+    expect(wsBase).not.toContain("://api:");
+  });
+
+  it("getFeedWebSocketUrl properly formats and encodes feed slug path", () => {
+    const url = getFeedWebSocketUrl("metro-city");
+    expect(url).toMatch(/^wss?:\/\/.*\/api\/v1\/feeds\/metro-city\/ws$/);
+
+    const encodedUrl = getFeedWebSocketUrl("metro city/uptown");
+    expect(encodedUrl).toContain("/api/v1/feeds/metro%20city%2Fuptown/ws");
   });
 });

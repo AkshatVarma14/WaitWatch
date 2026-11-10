@@ -844,3 +844,95 @@ Security review identified that `apps/web/Dockerfile` pinned `nginx:1.27.2-alpin
 - **Static Compose Validation**: Structural assertions pass cleanly via `scratch/validate_compose.py`.
 - **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
 - **Secret Scan**: Clean, zero secrets detected.
+
+---
+
+### 2026-11-10 — Stage 4, Slice 4.6: Core WebSocket Live Updates
+
+#### Overview
+Implemented the real-time WebSocket live updates architecture, closing the documented core objective gap from `PROJECT_INSTRUCTIONS.md`. Designed and implemented a lightweight, zero-broker publish/subscribe system using PostgreSQL native `LISTEN/NOTIFY` (`waitwatch_feed_updates` channel) combined with FastAPI WebSockets. Real-time vehicle positions and trip updates snapshot ingestion services atomically stage `pg_notify` within open database transactions, guaranteeing that notifications are emitted if and only if snapshot commits succeed (rollback or failed transactions publish zero events). A single managed background listener (`run_db_listener`) runs per API process via FastAPI lifespan, reconnecting with exponential backoff on disconnects without interrupting REST API service. On the client tier, a dedicated React hook (`useFeedLiveUpdates`) manages feed-scoped WebSocket subscriptions, handles ping/pong heartbeats, and invalidates matching TanStack Query caches (`["routeMap", feedSlug]` and `["arrivals", feedSlug]`) on event receipt for immediate UI synchronization. Redundant 30-second steady-state polling is paused when WebSockets are actively connected, with automatic, seamless fallback to polling on disconnect, error, or hidden tabs.
+
+#### Key Deliverables & Design Decisions
+1. **Zero-Broker PostgreSQL LISTEN/NOTIFY Event Publication** (`apps/api/app/services/realtime/events.py`):
+   - Defined `FeedUpdateEvent` schema (`type="feed_update"`, `feed_id`, `feed_slug`, `update_type`, `timestamp`, `vehicle_count`, `trip_update_count`). Never includes credentials, tokens, or raw transit data.
+   - `publish_feed_update`: On PostgreSQL, executes `SELECT pg_notify(:channel, :payload)` inside the active transaction. Also stages events in `session.info["_pending_feed_events"]` for in-process post-commit delivery (enabling zero-broker operation in SQLite tests).
+   - `dispatch_pending_feed_events`: Invoked strictly after successful `session.commit()` to deliver in-process events.
+   - `clear_pending_feed_events`: Invoked on exception or rollback to guarantee zero events are published on transaction failure.
+2. **Dedicated Async Database Listener** (`apps/api/app/services/realtime/db_listener.py`):
+   - Runs a single dedicated `asyncpg` connection per API process subscribed to channel `waitwatch_feed_updates`.
+   - Automatic reconnection with exponential backoff (1s to 30s) on connection loss without impacting REST API availability.
+   - Cleanly skips and logs when database dialect is non-PostgreSQL (e.g. SQLite unit tests).
+3. **Thread-Safe WebSocket Connection Manager** (`apps/api/app/services/realtime/websocket_manager.py`):
+   - `ConnectionManager` isolates client sets per `feed_slug`.
+   - Enforces per-feed connection capacity bounds (`max_connections_per_feed=500`).
+   - `broadcast_to_feed`: Concurrently fans out notifications to subscribed clients, pruning dead/closed sockets automatically.
+   - `handle_db_notification`: Safely validates incoming JSON payloads against `FeedUpdateEvent` before fanout.
+   - `close_all`: Gracefully closes all open connections on server shutdown.
+4. **Feed-Scoped WebSocket Endpoint** (`apps/api/app/api/websocket.py`):
+   - Endpoint `/api/v1/feeds/{feed_slug}/ws` (and root alias `/api/feeds/{feed_slug}/ws`).
+   - Validates `feed_slug` against database; safely rejects non-existent feeds with WebSocket close code 1008 (Policy Violation) and clear error message.
+   - Welcomes connected clients with initial connection acknowledgment.
+   - Responds to client `ping` messages with `pong` heartbeats.
+5. **Ingestion Services Integration** (`service.py` & `trip_update_service.py`):
+   - `VehiclePositionIngestionService`: Stages `FeedUpdateEvent(update_type="vehicles")` within transaction; dispatches after commit.
+   - `TripUpdateIngestionService`: Stages `FeedUpdateEvent(update_type="trip_updates")` within transaction; dispatches after commit.
+6. **Frontend WebSocket Client & TanStack Query Hook** (`apps/web/src/lib/useFeedLiveUpdates.ts`):
+   - Connects to feed-scoped WebSocket endpoint when a feed is selected and tab is visible.
+   - Suspends connection and sets status to `"paused"` when document is hidden to conserve bandwidth and battery.
+   - On `feed_update` event: updates `lastLiveUpdateAt` and invalidates `["routeMap", feedSlug]` and `["arrivals", feedSlug]`.
+   - On disconnect or error: sets status to `"fallback"` and schedules reconnect with exponential backoff (1s, 2s, 4s, up to 30s). Refetches data immediately on reconnect.
+   - Does not retry on code 1008 (policy violation / unknown feed).
+   - Periodic 30s `ping` heartbeat to maintain socket liveliness.
+7. **Frontend State & Polling Coordination** (`apps/web/src/`):
+   - `appStore.ts`: Tracks `liveStatus: LiveConnectionStatus` (`"connected" | "connecting" | "disconnected" | "fallback" | "paused"`).
+   - `arrivalsBoard.tsx` & `mapView.tsx`: `refetchInterval` returns `false` when `liveStatus === "connected"`, eliminating redundant 30s background queries. Automatically falls back to 30s polling when disconnected or in error.
+   - Accessible status indicators: `● Live (WS)` when connected vs `● Live (30s)` on polling fallback vs `⏸ Paused` when hidden vs `⚠️ Stale` on error with cached data.
+   - `Dashboard.tsx`: Header live indicator badge reflecting real-time connection state.
+8. **Proxy Configurations** (`apps/web/vite.config.ts`, `apps/web/nginx.conf`):
+   - Vite dev proxy configured with `ws: true` for `/api`.
+   - Nginx configured with `map $http_upgrade $connection_upgrade` and `Upgrade`/`Connection` headers with 3600s timeouts.
+9. **Comprehensive Backend & Frontend Test Suites**:
+   - Backend Pytest: 9 new tests in `test_websocket.py` covering unknown feed rejection (code 1008), successful connection & ping/pong, feed isolation & multi-client fanout, capacity limits, transaction rollback suppression, successful commit dispatch, malformed payload resilience, non-postgres listener skipping, and listener cancellation.
+   - Frontend Vitest: 9 new tests across `api.test.ts` and `useFeedLiveUpdates.test.tsx` covering URL derivation, feed path encoding, connection lifecycle, query invalidation, feed isolation, heartbeat pings, fallback on disconnect, and non-retry on code 1008.
+
+#### Verification Evidence
+- **Backend Pytest**: 147 passed in 11.71s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint errors, 67 files formatted cleanly (`py -3.12 -m ruff check apps/api; py -3.12 -m ruff format --check apps/api`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall apps/api`).
+- **Frontend Vitest**: 92 passed across 7 test suites in 4.47s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite in 2.37s (`npm.cmd run build`).
+- **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
+- **Secret Scan**: Clean, zero secrets detected.
+
+#### Changed / Added Files
+- `apps/api/app/services/realtime/events.py` (event schema, PostgreSQL notify staging, post-commit dispatch)
+- `apps/api/app/services/realtime/websocket_manager.py` (connection manager, feed isolation, dead socket pruning)
+- `apps/api/app/services/realtime/db_listener.py` (managed PostgreSQL LISTEN task with reconnection backoff)
+- `apps/api/app/api/websocket.py` (FastAPI feed-scoped WebSocket endpoint)
+- `apps/api/app/api/router.py` (registered WebSocket router)
+- `apps/api/app/services/realtime/service.py` (event staging and dispatch on vehicle ingestion commit)
+- `apps/api/app/services/realtime/trip_update_service.py` (event staging and dispatch on trip update commit)
+- `apps/api/app/main.py` (lifespan listener startup and graceful connection cleanup)
+- `apps/api/tests/test_websocket.py` (9 comprehensive integration and unit tests)
+- `apps/web/src/types/transit.ts` (added `FeedUpdateEvent` and `LiveConnectionStatus`)
+- `apps/web/src/lib/api.ts` (WebSocket base URL derivation and feed URL formatting)
+- `apps/web/src/stores/appStore.ts` (tracked live connection status and last update timestamp)
+- `apps/web/src/lib/useFeedLiveUpdates.ts` (WebSocket hook with query invalidation and fallback)
+- `apps/web/src/components/arrivalsBoard.tsx` (WebSocket-aware refetch interval and status badge)
+- `apps/web/src/components/mapView.tsx` (WebSocket-aware refetch interval and status badge)
+- `apps/web/src/pages/Dashboard.tsx` (wired live update hook and header status pill)
+- `apps/web/vite.config.ts` (proxy configuration with `ws: true`)
+- `apps/web/nginx.conf` (Nginx WebSocket upgrade headers and connection map)
+- `apps/web/src/__tests__/api.test.ts` (WebSocket URL derivation tests)
+- `apps/web/src/__tests__/useFeedLiveUpdates.test.tsx` (7 WebSocket hook unit tests)
+- `README.md` (updated Stage 4 status table, Slice 4.6 milestone summary, and test counts)
+- `docs/architecture/overview.md` (documented WebSocket architecture and updated status)
+- `docs/development-ledger.md` (this ledger entry)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - Turn-by-turn route planning and multi-modal trip planning remain future roadmap items.
+  - Multi-city production hosting and managed cloud deployment are not yet configured.
+- **Next Roadmap Step**:
+  - Core project objectives (Stages 0–4 including WebSocket live updates) are fully satisfied and verified. Future scope may include turn-by-turn trip planning, user favorites, or cloud infrastructure.

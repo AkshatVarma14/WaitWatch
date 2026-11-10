@@ -12,6 +12,12 @@ from app.models.feed import TransitFeed
 from app.models.vehicle_observation import VehicleObservation
 from app.models.vehicle_position import VehiclePosition
 from app.services.realtime.downloader import download_realtime_feed
+from app.services.realtime.events import (
+    FeedUpdateEvent,
+    clear_pending_feed_events,
+    dispatch_pending_feed_events,
+    publish_feed_update,
+)
 from app.services.realtime.exceptions import (
     RealtimeDownloadError,
     RealtimePersistenceError,
@@ -20,6 +26,7 @@ from app.services.realtime.parser import (
     ParsedVehiclePosition,
     parse_vehicle_positions,
 )
+from app.services.realtime.websocket_manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +225,20 @@ class VehiclePositionIngestionService:
             feed.last_realtime_poll_at = receipt_time
             session.add(feed)
 
+            # Stage feed update notification within the transaction
+            event = FeedUpdateEvent(
+                feed_id=feed.id,
+                feed_slug=feed_slug,
+                update_type="vehicles",
+                timestamp=receipt_time.isoformat(),
+                vehicle_count=len(snapshot_entities),
+            )
+            await publish_feed_update(session, event)
+
             # Commit transaction atomically
             await session.commit()
+            await dispatch_pending_feed_events(session, ws_manager)
+
             logger.info(
                 "Ingested %d snapshot vehicles and %d new observations for feed '%s'",
                 len(snapshot_entities),
@@ -228,6 +247,7 @@ class VehiclePositionIngestionService:
             )
             return len(snapshot_entities)
         except Exception as exc:
+            clear_pending_feed_events(session)
             await session.rollback()
             logger.error(
                 "Failed to commit vehicle position snapshot for feed '%s': %s",
