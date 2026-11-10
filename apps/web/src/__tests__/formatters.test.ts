@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatDelay,
+  formatLastUpdated,
   formatObservationAge,
   formatPredictionSource,
   formatTime,
@@ -119,6 +120,27 @@ describe("formatters", () => {
     it("formats hours ago", () => {
       const obsTime = new Date("2026-11-10T10:00:00Z").toISOString(); // 2h ago
       expect(formatObservationAge(obsTime, fixedNow)).toBe("2h ago");
+    });
+  });
+
+  describe("formatLastUpdated", () => {
+    it("returns 'Never' for null, undefined, or 0", () => {
+      expect(formatLastUpdated(null)).toBe("Never");
+      expect(formatLastUpdated(undefined)).toBe("Never");
+      expect(formatLastUpdated(0)).toBe("Never");
+      expect(formatLastUpdated(-1)).toBe("Never");
+    });
+
+    it("formats valid millisecond timestamp", () => {
+      const ts = new Date("2026-11-10T12:34:56Z").getTime();
+      const formatted = formatLastUpdated(ts, "UTC");
+      expect(formatted).toMatch(/12:34:56/);
+    });
+
+    it("handles invalid timezone gracefully", () => {
+      const ts = new Date("2026-11-10T12:34:56Z").getTime();
+      const formatted = formatLastUpdated(ts, "Invalid/Tz");
+      expect(formatted).not.toBe("Never");
     });
   });
 });

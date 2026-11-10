@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import * as api from "../lib/api";
@@ -226,7 +226,7 @@ function createTestQueryClient() {
     defaultOptions: {
       queries: {
         retry: false,
-        gcTime: 0,
+        gcTime: 60_000,
       },
     },
   });
@@ -885,6 +885,255 @@ describe("Transit Explorer Components", () => {
         expect(screen.getByText("Select a Transit Route")).toBeInTheDocument();
       });
       expect(screen.queryByText(/• Route B1/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Realtime Polling and Live Refresh", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("displays live polling indicator and timestamp on ArrivalsBoard", async () => {
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedStop(mockStopsMetro[0]!);
+      vi.spyOn(api, "fetchArrivals").mockResolvedValue(mockArrivals);
+
+      renderWithClient(<ArrivalsBoard />);
+
+      await waitFor(() => {
+        expect(screen.getByText("B1")).toBeInTheDocument();
+      });
+
+      // Accessible live polling status and timestamp
+      expect(screen.getByText(/Live \(30s\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Updated/i)).toBeInTheDocument();
+    });
+
+    it("periodically refreshes stop arrivals every 30 seconds using fake timers", async () => {
+      vi.useFakeTimers();
+
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedStop(mockStopsMetro[0]!);
+
+      const fetchSpy = vi
+        .spyOn(api, "fetchArrivals")
+        .mockResolvedValue(mockArrivals);
+
+      renderWithClient(<ArrivalsBoard />);
+
+      // Flush initial query
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // Advance by 30 seconds (default polling interval)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      // Advance by another 30 seconds
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it("periodically refreshes route map and vehicles every 30 seconds using fake timers", async () => {
+      vi.useFakeTimers();
+
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedRouteId("route-blue");
+
+      const fetchSpy = vi
+        .spyOn(api, "fetchRouteMap")
+        .mockResolvedValue(mockRouteMapWithShapes);
+
+      renderWithClient(<MapView />);
+
+      // Flush initial query
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // Advance by 30 seconds
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("preserves last successful arrivals on transient background refresh failure", async () => {
+      vi.useFakeTimers();
+
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedStop(mockStopsMetro[0]!);
+
+      // First call succeeds, second call fails with transient error
+      const fetchSpy = vi
+        .spyOn(api, "fetchArrivals")
+        .mockResolvedValueOnce(mockArrivals)
+        .mockRejectedValueOnce(new Error("503 Backend Service Temporarily Unavailable"));
+
+      renderWithClient(<ArrivalsBoard />);
+
+      // Flush initial successful load
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("B1")).toBeInTheDocument();
+      expect(screen.getByText("Uptown Express")).toBeInTheDocument();
+
+      // Trigger background poll which fails
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      // Crucial requirements:
+      // 1. Existing arrival data is NOT wiped or replaced by blank screen
+      expect(screen.getByText("B1")).toBeInTheDocument();
+      expect(screen.getByText("Uptown Express")).toBeInTheDocument();
+
+      // 2. Clear warning banner is displayed with last updated timestamp
+      expect(
+        screen.getByText(/Live update failed/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/Displaying predictions from/i),
+      ).toBeInTheDocument();
+
+      // 3. Status indicator shows "Stale"
+      expect(screen.getByText(/⚠️ Stale/i)).toBeInTheDocument();
+    });
+
+    it("preserves map view on transient background refresh failure", async () => {
+      vi.useFakeTimers();
+
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedRouteId("route-blue");
+
+      const fetchSpy = vi
+        .spyOn(api, "fetchRouteMap")
+        .mockResolvedValueOnce(mockRouteMapWithShapes)
+        .mockRejectedValueOnce(new Error("500 Internal Error"));
+
+      renderWithClient(<MapView />);
+
+      // Initial successful load
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/• Route B1/i)).toBeInTheDocument();
+
+      // Background poll failure
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      // Route header and map remain visible
+      expect(screen.getByText(/• Route B1/i)).toBeInTheDocument();
+      expect(screen.getByText(/⚠️ Stale/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Live vehicle refresh failed/i),
+      ).toBeInTheDocument();
+    });
+
+    it("pauses polling while document is hidden and resumes on visibility return", async () => {
+      vi.useFakeTimers();
+
+      let visibilityState = "visible";
+      const visibilitySpy = vi
+        .spyOn(document, "visibilityState", "get")
+        .mockImplementation(() => visibilityState as DocumentVisibilityState);
+
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedStop(mockStopsMetro[0]!);
+
+      const fetchSpy = vi
+        .spyOn(api, "fetchArrivals")
+        .mockResolvedValue(mockArrivals);
+
+      renderWithClient(<ArrivalsBoard />);
+
+      // Initial query resolves
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // Document becomes hidden
+      visibilityState = "hidden";
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      // Advance by 60 seconds (2 intervals) while hidden
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      // No extra calls should have been made while hidden
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // Document returns to visible
+      visibilityState = "visible";
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      // Visibility return triggers immediate refresh
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      visibilitySpy.mockRestore();
+    });
+
+    it("does not poll when stop is deselected or feed is cleared", async () => {
+      vi.useFakeTimers();
+
+      useAppStore.getState().setSelectedFeedSlug("metro-city");
+      useAppStore.getState().setSelectedStop(mockStopsMetro[0]!);
+
+      const fetchSpy = vi
+        .spyOn(api, "fetchArrivals")
+        .mockResolvedValue(mockArrivals);
+
+      const { rerender } = renderWithClient(<ArrivalsBoard />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // Deselect stop
+      act(() => {
+        useAppStore.getState().setSelectedStop(null);
+      });
+      rerender(
+        <QueryClientProvider client={createTestQueryClient()}>
+          <ArrivalsBoard />
+        </QueryClientProvider>,
+      );
+
+      // Advance by 60s
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      // No additional calls for deselected stop
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

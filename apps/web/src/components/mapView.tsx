@@ -3,7 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { fetchRouteMap } from "../lib/api";
-import { formatObservationAge } from "../lib/formatters";
+import { formatLastUpdated, formatObservationAge } from "../lib/formatters";
+import {
+  getPollingIntervalMs,
+  useDocumentVisibility,
+  usePollingVisibilityRefresh,
+} from "../lib/polling";
 import { useAppStore } from "../stores/appStore";
 import type { RouteMapStop } from "../types/transit";
 
@@ -22,20 +27,40 @@ export function MapView() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
+  const lastFittedRouteRef = useRef<string | null>(null);
 
   const tileUrl = import.meta.env.VITE_MAP_TILE_URL || DEFAULT_TILE_URL;
+  const pollingInterval = getPollingIntervalMs();
+  const isPollingEnabled = Boolean(selectedFeedSlug && selectedRouteId);
+  const isVisible = useDocumentVisibility();
 
   const {
     data: routeMapData,
+    dataUpdatedAt,
     isLoading,
+    isFetching,
     isError,
     error,
     refetch,
   } = useQuery({
     queryKey: ["routeMap", selectedFeedSlug, selectedRouteId],
     queryFn: () => fetchRouteMap(selectedFeedSlug!, selectedRouteId!),
-    enabled: Boolean(selectedFeedSlug && selectedRouteId),
+    enabled: isPollingEnabled,
+    refetchInterval: () => {
+      if (!isPollingEnabled || !isVisible) {
+        return false;
+      }
+      return pollingInterval;
+    },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
+
+  const hasError = isError || Boolean(error);
+
+  usePollingVisibilityRefresh(isPollingEnabled, () => {
+    void refetch();
+  }, isVisible);
 
   // 1. Initialize Leaflet map instance once
   useEffect(() => {
@@ -191,15 +216,34 @@ export function MapView() {
       }
     }
 
-    // 2d. Fit bounds to all route elements
-    if (boundsPoints.length > 0) {
+    // 2d. Fit bounds to all route elements on initial load or route change
+    // Avoid re-fitting on background polling ticks to preserve user zoom/pan and tile stability
+    if (
+      boundsPoints.length > 0 &&
+      lastFittedRouteRef.current !== selectedRouteId
+    ) {
+      lastFittedRouteRef.current = selectedRouteId;
       const bounds = L.latLngBounds(boundsPoints);
       map.fitBounds(bounds, {
         padding: [30, 30],
         maxZoom: 15,
       });
     }
-  }, [routeMapData, selectedStop?.stop_id, selectedVehicleId, setSelectedStop, setSelectedVehicleId]);
+  }, [
+    routeMapData,
+    selectedRouteId,
+    selectedStop?.stop_id,
+    selectedVehicleId,
+    setSelectedStop,
+    setSelectedVehicleId,
+  ]);
+
+  // Reset fitted route reference when route selection is cleared
+  useEffect(() => {
+    if (!selectedRouteId) {
+      lastFittedRouteRef.current = null;
+    }
+  }, [selectedRouteId]);
 
   return (
     <div
@@ -217,33 +261,90 @@ export function MapView() {
           )}
         </div>
 
-        {/* Shape Availability Disclosure */}
-        {routeMapData && (
-          <div className="flex items-center gap-2">
-            {routeMapData.shapes.length > 0 ? (
-              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                GTFS Shape Active ({routeMapData.shapes.length}{" "}
-                {routeMapData.shapes.length === 1 ? "track" : "tracks"})
-              </span>
-            ) : (
-              <span
-                role="status"
-                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800"
-                title="GTFS shapes.txt was not included in this feed. Displaying available stop locations."
-              >
-                ⚠️ Route shape unavailable — showing stops only
-              </span>
-            )}
+        {/* Status Indicators & Controls */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Polling / Live Status */}
+          {isPollingEnabled && (
+            <div className="flex items-center gap-1.5 text-xs">
+              {!isVisible ? (
+                <span
+                  role="status"
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700"
+                  title="Polling paused while window/tab is hidden"
+                >
+                  ⏸ Paused
+                </span>
+              ) : hasError && routeMapData ? (
+                <span
+                  role="status"
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800"
+                  title="Live refresh encountered an error; displaying last successful data"
+                >
+                  ⚠️ Stale
+                </span>
+              ) : (
+                <span
+                  role="status"
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800"
+                  title={`Live polling active every ${Math.round(pollingInterval / 1000)} seconds`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live ({Math.round(pollingInterval / 1000)}s)
+                </span>
+              )}
 
-            {routeMapData.vehicles.length > 0 && (
-              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-950/70 text-blue-300 border border-blue-800">
-                🚌 {routeMapData.vehicles.length} Live{" "}
-                {routeMapData.vehicles.length === 1 ? "Vehicle" : "Vehicles"}
+              {dataUpdatedAt > 0 && (
+                <span className="text-[11px] text-gray-500 hidden sm:inline">
+                  Updated {formatLastUpdated(dataUpdatedAt)}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Shape Availability Disclosure */}
+          {routeMapData && (
+            <>
+              {routeMapData.shapes.length > 0 ? (
+                <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  GTFS Shape Active ({routeMapData.shapes.length}{" "}
+                  {routeMapData.shapes.length === 1 ? "track" : "tracks"})
+                </span>
+              ) : (
+                <span
+                  role="status"
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800"
+                  title="GTFS shapes.txt was not included in this feed. Displaying available stop locations."
+                >
+                  ⚠️ Route shape unavailable — showing stops only
+                </span>
+              )}
+
+              {routeMapData.vehicles.length > 0 && (
+                <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-950/70 text-blue-300 border border-blue-800">
+                  🚌 {routeMapData.vehicles.length} Live{" "}
+                  {routeMapData.vehicles.length === 1 ? "Vehicle" : "Vehicles"}
+                </span>
+              )}
+            </>
+          )}
+
+          {/* Manual Refresh Button */}
+          {selectedRouteId && (
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              disabled={isFetching}
+              aria-label="Refresh route map"
+              className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-[11px] text-gray-200 rounded border border-gray-700 transition-colors cursor-pointer"
+            >
+              <span className={isFetching ? "animate-spin" : ""}>🔄</span>
+              <span className="hidden sm:inline">
+                {isFetching ? "Refreshing..." : "Refresh"}
               </span>
-            )}
-          </div>
-        )}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Map Canvas Container */}
@@ -272,7 +373,7 @@ export function MapView() {
           </div>
         )}
 
-        {/* Loading Overlay */}
+        {/* Loading Overlay (initial query only) */}
         {isLoading && (
           <div
             role="status"
@@ -285,8 +386,32 @@ export function MapView() {
           </div>
         )}
 
-        {/* Error Overlay */}
-        {isError && (
+        {/* Transient Refresh Error Warning (preserves existing map data) */}
+        {hasError && routeMapData && (
+          <div
+            role="alert"
+            className="absolute inset-x-4 top-4 bg-amber-950/90 border border-amber-800 text-amber-200 text-xs rounded-md p-2.5 flex items-center justify-between z-10"
+          >
+            <div className="flex items-center gap-2">
+              <span>⚠️</span>
+              <span>
+                Live vehicle refresh failed ({error instanceof Error ? error.message : "Network error"}).
+                Displaying data from {formatLastUpdated(dataUpdatedAt)}.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              disabled={isFetching}
+              className="text-amber-100 underline hover:no-underline text-xs ml-2 cursor-pointer shrink-0 disabled:opacity-50"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Initial Load Error Overlay (when no data exists) */}
+        {hasError && !routeMapData && (
           <div
             role="alert"
             className="absolute inset-x-4 top-4 bg-red-950/90 border border-red-800 text-red-200 text-xs rounded-md p-3 flex items-center justify-between z-10"

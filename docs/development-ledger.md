@@ -619,3 +619,60 @@ The default tile layer uses OpenStreetMap's standard tile service (`https://tile
   - Map tiles rely on standard raster tile services; vector map styling is not yet integrated.
 - **Next Authorized Step**:
   - **Stage 4, Slice 4.3**: Realtime Polling & Live Map Refresh (or GTFS-RT TripUpdates Ingestion).
+
+### 2026-11-10 — Stage 4, Slice 4.3: Realtime Polling & Live Map Refresh
+
+#### Overview
+Implemented client-side real-time periodic polling and live data refresh across the Transit Explorer web application. Chose the modest client polling architecture to deliver immediate passenger utility without introducing new server workers, schedulers, or streaming infrastructure. Applied a conservative 30-second default polling interval (`DEFAULT_POLLING_INTERVAL_MS = 30_000`, configurable via `VITE_POLLING_INTERVAL_SEC`), strictly active only when a relevant feed/stop or feed/route is selected and the browser tab is visible. Integrated browser document visibility tracking (`useDocumentVisibility`, `usePollingVisibilityRefresh`) to pause polling while hidden and refresh immediately upon visibility return. Hardened error resilience to preserve previous successful arrival predictions and route vehicle markers on transient network failures, displaying non-blocking stale warning banners, exact last-updated timestamps, "⚠️ Stale" status indicators, and manual refresh controls. Preserved map performance by polling JSON transit data only, avoiding automated tile re-fetches.
+
+#### Key Deliverables & Design Decisions
+1. **Configurable Polling Configuration & Visibility Management** (`apps/web/src/lib/polling.ts`, `apps/web/.env.example`):
+   - Defined `DEFAULT_POLLING_INTERVAL_MS = 30_000` (30 seconds), configurable via optional `VITE_POLLING_INTERVAL_SEC` environment variable (bounded between 10s and 300s).
+   - Documented the chosen 30-second interval: provides responsive ETA updates and live vehicle movement while keeping network requests and CPU overhead conservative.
+   - Built `useDocumentVisibility()` custom hook using the HTML5 Page Visibility API (`visibilitychange` event) with clean event listener cleanup on unmount.
+   - Built `usePollingVisibilityRefresh(enabled, refetch, isVisible)` to automatically detect transitions from hidden back to visible and trigger a single synchronization refresh.
+2. **Stop Arrivals Polling & Stale Error Resilience** (`apps/web/src/components/arrivalsBoard.tsx`):
+   - Configured TanStack Query `refetchInterval` returning `pollingInterval` (30s) only when both `selectedFeedSlug && selectedStop` are present and the page is visible (`isVisible`).
+   - Disabled background polling (`refetchIntervalInBackground: false`).
+   - Integrated `formatLastUpdated` timestamp formatter (`apps/web/src/lib/formatters.ts`) to display exact clock time of the last successful update.
+   - Preserves previous arrivals data on transient background refresh failure (`hasError && arrivals.length > 0`) while displaying a non-blocking warning alert, last updated timestamp, and "⚠️ Stale" status pill.
+   - Displays accessible live status indicator: `● Live (30s)` with pulsing indicator when fresh, `⏸ Paused` when tab is hidden, or `⚠️ Stale` when refresh failed.
+   - Manual "Refresh" button with loading spinner, disabled during in-flight fetches (`isFetching`) to prevent request racing or duplication.
+3. **Route Map & Live Vehicle Polling** (`apps/web/src/components/mapView.tsx`, `apps/web/src/components/mapDetailsPanel.tsx`):
+   - Configured TanStack Query `refetchInterval` for `["routeMap", selectedFeedSlug, selectedRouteId]`.
+   - Polling scoped strictly to active `selectedFeedSlug && selectedRouteId`; ceases immediately when a route or feed is cleared.
+   - **No Automated Tile Requests**: Polls only the route map JSON endpoint; Leaflet vector polylines, stop circles, and vehicle div icons update in-place without touching tile layers.
+   - **Stable Viewport**: `map.fitBounds` is called strictly on initial route selection or route change (`lastFittedRouteRef`), preventing jarring viewport jumps during background vehicle updates.
+   - Transient failure preservation: preserves the map canvas and vehicle markers on background failure, showing a warning banner and `⚠️ Stale` badge.
+   - Both `MapView` and `MapDetailsPanel` share the exact same cached query, deduplicating network calls completely.
+4. **Comprehensive Unit & Integration Test Suites**:
+   - `apps/web/src/__tests__/polling.test.ts` (6 tests: default interval, environment configuration, document visibility changes, event listener cleanup, visibility return refresh, disabled polling check).
+   - `apps/web/src/__tests__/formatters.test.ts` (17 tests: extended with `formatLastUpdated` tests for null, 0, timestamps, and timezone support).
+   - `apps/web/src/__tests__/TransitExplorer.test.tsx` (33 tests: tested live polling indicators and timestamps, fake timer periodic refresh at 30s intervals for arrivals and map data, transient error preservation retaining data and showing warnings, document visibility pause while hidden and immediate resume on return, selection change/unmount cleanup).
+
+#### Verification Evidence
+- **Frontend Vitest**: 81 tests passed across 6 test suites in 4.53s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite in 2.38s (`npm.cmd run build`).
+- **Backend Pytest**: 114 tests passing from Stage 4.2 (backend files were not modified in this slice).
+
+#### Changed / Added Files
+- `apps/web/src/lib/polling.ts` (new polling configuration and visibility hooks)
+- `apps/web/src/lib/formatters.ts` (added `formatLastUpdated` timestamp formatter)
+- `apps/web/.env.example` (documented `VITE_POLLING_INTERVAL_SEC`)
+- `apps/web/src/components/arrivalsBoard.tsx` (polling, visibility integration, stale error preservation, live indicators)
+- `apps/web/src/components/mapView.tsx` (route/vehicle polling, stable fitBounds, stale preservation, live indicators)
+- `apps/web/src/components/mapDetailsPanel.tsx` (synchronized route map polling query options)
+- `apps/web/src/__tests__/polling.test.ts` (new unit tests for polling and visibility hooks)
+- `apps/web/src/__tests__/formatters.test.ts` (added tests for `formatLastUpdated`)
+- `apps/web/src/__tests__/TransitExplorer.test.tsx` (added 7 new tests for periodic polling, visibility pause/resume, stale preservation)
+- `README.md` (updated Stage 4 milestones and status)
+- `docs/architecture/overview.md` (updated architecture status with real-time polling)
+- `docs/development-ledger.md` (this ledger entry)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - Browser-based client polling queries the existing read-only REST endpoints; vehicle positions and stop arrivals only update when backend feeds or GTFS-RT pollers ingest new telemetry.
+  - Push-based streaming (WebSockets or Server-Sent Events) is not yet implemented.
+- **Next Authorized Step**:
+  - **Stage 4, Slice 4.4**: GTFS-Realtime TripUpdates Ingestion (or End-to-End Polish & Docker Deployment Scaffolding).

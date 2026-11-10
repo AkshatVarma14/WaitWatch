@@ -244,7 +244,7 @@ Vehicle Positions + Schedule Data + Historical Delays
 
 ## Current Status
 
-**Stages 0 through 3 are complete and verified; Stage 4, Slices 4.1 & 4.2 are implemented and verified**:
+**Stages 0 through 3 are complete and verified; Stage 4, Slices 4.1, 4.2 & 4.3 are implemented and verified**:
 
 - Full monorepo repository structure and CI/CD pipelines
 - Complete GTFS Static database schema, migrations 0001–0005 (`0005_shapes` for route geometry), and ingestion pipeline
@@ -254,8 +254,9 @@ Vehicle Positions + Schedule Data + Historical Delays
 - Frontend Feed-Aware Transit Explorer & Live Arrivals Board (`apps/web` with React, TypeScript, TanStack Query, Zustand, and Tailwind)
 - Interactive route and vehicle map visualization (`MapView` with Leaflet) rendering true GTFS shape polylines, ordered stop markers, and bearing-rotated live vehicles with configurable tile provider and strict missing-shape warnings (no fabricated geometry)
 - Accessible route selector combobox (`RouteSelector`) and stop/vehicle navigator panel (`MapDetailsPanel`)
+- Real-time client polling architecture with 30-second interval, document visibility tracking (`useDocumentVisibility`, `usePollingVisibilityRefresh`), transient error handling preserving last successful data with "⚠️ Stale" status, and stable map viewports avoiding automated tile requests
 - Strict feed and route isolation across all frontend selections and API queries
-- 65 frontend tests (Vitest) and 114 backend tests (Pytest) passing cleanly in local and CI runs
+- 81 frontend tests (Vitest across 6 files) and 114 backend tests (Pytest) passing cleanly in local and CI runs
 
 Subsequent planned work:
 - GTFS-Realtime TripUpdates ingestion

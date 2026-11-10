@@ -151,3 +151,40 @@ export function formatObservationAge(
   const diffHours = Math.floor(diffMinutes / 60);
   return `${diffHours}h ago`;
 }
+
+/**
+ * Formats a local millisecond timestamp into a human-readable clock time for last updated badges.
+ */
+export function formatLastUpdated(
+  timestampMs: number | null | undefined,
+  timeZone?: string | null,
+): string {
+  if (!timestampMs || timestampMs <= 0) {
+    return "Never";
+  }
+
+  const date = new Date(timestampMs);
+  if (Number.isNaN(date.getTime())) {
+    return "Never";
+  }
+
+  const options: Intl.DateTimeFormatOptions = {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  };
+
+  if (timeZone && timeZone.trim()) {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        ...options,
+        timeZone: timeZone.trim(),
+      }).format(date);
+    } catch {
+      // Fallback to local time if timezone is invalid
+    }
+  }
+
+  return new Intl.DateTimeFormat(undefined, options).format(date);
+}

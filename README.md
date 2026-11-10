@@ -158,7 +158,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 | Stage 1 | GTFS static data ingestion | ✅ Complete (Slices 1.1, 1.2 & 1.3) |
 | Stage 2 | GTFS-Realtime integration | ✅ Complete (Slice 2.1 Complete) |
 | Stage 3 | Historical Observation & ETA Prediction | ✅ Complete (Slices 3.1 & 3.2 Complete) |
-| Stage 4 | UI polish and deployment | 🟡 In Progress (Slices 4.1 & 4.2 Complete) |
+| Stage 4 | UI polish and deployment | 🟡 In Progress (Slices 4.1, 4.2 & 4.3 Complete) |
 
 ### Completed Milestones
 - **Stage 0**: Full foundation with React/TS/Tailwind frontend, FastAPI backend, CI workflows, and documentation.
@@ -182,6 +182,13 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - Keyboard-accessible route selector (`RouteSelector`) and dual-tab stop/vehicle inspector panel (`MapDetailsPanel`).
   - Feed and route isolation: switching feeds clears active routes, stops, vehicles, and map layers.
   - Comprehensive test suite: 65 Vitest frontend tests and 114 Pytest backend tests.
+- **Stage 4, Slice 4.3**: Realtime Polling & Live Map Refresh:
+  - Added periodic client refresh for active stop arrivals and route vehicle positions with a conservative, configurable 30-second interval (`DEFAULT_POLLING_INTERVAL_MS = 30_000`, `VITE_POLLING_INTERVAL_SEC=30`).
+  - Active-tab visibility management (`useDocumentVisibility`, `usePollingVisibilityRefresh`): pauses polling while the page or tab is hidden, and performs an immediate refresh on visibility return.
+  - Strict selection scoping: polling runs only when relevant entities are selected (`feed + stop` for arrivals, `feed + route` for map and vehicle positions); switching feeds or routes immediately halts stale polling and prevents cross-feed data leakage.
+  - Transient failure resilience: preserves the last successful predictions and vehicle positions on transient refresh errors, accompanied by a non-blocking warning banner, last updated timestamp (`formatLastUpdated`), "⚠️ Stale" status pill, and manual retry controls.
+  - JSON API polling only: Leaflet map tiles are untouched during background polling, vector layers update in-place, and map bounds auto-fit only on initial route selection to maintain stable viewports.
+  - Comprehensive test suite: 81 Vitest frontend tests across 6 files, and 114 Pytest backend tests.
 
 ## License
 

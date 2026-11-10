@@ -2,6 +2,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchRouteMap } from "../lib/api";
 import { formatObservationAge } from "../lib/formatters";
+import {
+  getPollingIntervalMs,
+  useDocumentVisibility,
+} from "../lib/polling";
 import { useAppStore } from "../stores/appStore";
 
 export function MapDetailsPanel() {
@@ -14,10 +18,22 @@ export function MapDetailsPanel() {
 
   const [activeTab, setActiveTab] = useState<"stops" | "vehicles">("stops");
 
+  const pollingInterval = getPollingIntervalMs();
+  const isPollingEnabled = Boolean(selectedFeedSlug && selectedRouteId);
+  const isVisible = useDocumentVisibility();
+
   const { data: routeMapData } = useQuery({
     queryKey: ["routeMap", selectedFeedSlug, selectedRouteId],
     queryFn: () => fetchRouteMap(selectedFeedSlug!, selectedRouteId!),
-    enabled: Boolean(selectedFeedSlug && selectedRouteId),
+    enabled: isPollingEnabled,
+    refetchInterval: () => {
+      if (!isPollingEnabled || !isVisible) {
+        return false;
+      }
+      return pollingInterval;
+    },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
   if (!selectedRouteId || !routeMapData) {

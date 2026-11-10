@@ -2,10 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchArrivals } from "../lib/api";
 import {
   formatDelay,
+  formatLastUpdated,
   formatObservationAge,
   formatPredictionSource,
   formatTime,
 } from "../lib/formatters";
+import {
+  getPollingIntervalMs,
+  useDocumentVisibility,
+  usePollingVisibilityRefresh,
+} from "../lib/polling";
 import { useAppStore } from "../stores/appStore";
 import type { StopArrivalPrediction } from "../types/transit";
 
@@ -13,8 +19,13 @@ export function ArrivalsBoard() {
   const selectedFeedSlug = useAppStore((state) => state.selectedFeedSlug);
   const selectedStop = useAppStore((state) => state.selectedStop);
 
+  const pollingInterval = getPollingIntervalMs();
+  const isPollingEnabled = Boolean(selectedFeedSlug && selectedStop);
+  const isVisible = useDocumentVisibility();
+
   const {
     data: arrivals,
+    dataUpdatedAt,
     isLoading,
     isFetching,
     isError,
@@ -23,8 +34,22 @@ export function ArrivalsBoard() {
   } = useQuery({
     queryKey: ["arrivals", selectedFeedSlug, selectedStop?.stop_id],
     queryFn: () => fetchArrivals(selectedFeedSlug!, selectedStop!.stop_id),
-    enabled: Boolean(selectedFeedSlug && selectedStop),
+    enabled: isPollingEnabled,
+    refetchInterval: () => {
+      if (!isPollingEnabled || !isVisible) {
+        return false;
+      }
+      return pollingInterval;
+    },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
+
+  const hasError = isError || Boolean(error);
+
+  usePollingVisibilityRefresh(isPollingEnabled, () => {
+    void refetch();
+  }, isVisible);
 
   if (!selectedFeedSlug) {
     return (
@@ -74,7 +99,43 @@ export function ArrivalsBoard() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Polling / Live Status Indicator */}
+          <div className="flex items-center gap-1.5 text-xs">
+            {!isVisible ? (
+              <span
+                role="status"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 text-[11px]"
+                title="Polling paused while window/tab is hidden"
+              >
+                ⏸ Paused
+              </span>
+            ) : hasError && arrivals ? (
+              <span
+                role="status"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800 text-[11px]"
+                title="Live refresh encountered an error; displaying last successful data"
+              >
+                ⚠️ Stale
+              </span>
+            ) : (
+              <span
+                role="status"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800 text-[11px]"
+                title={`Live polling active every ${Math.round(pollingInterval / 1000)} seconds`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live ({Math.round(pollingInterval / 1000)}s)
+              </span>
+            )}
+
+            {dataUpdatedAt > 0 && (
+              <span className="text-[11px] text-gray-500 hidden sm:inline">
+                Updated {formatLastUpdated(dataUpdatedAt, selectedStop.timezone)}
+              </span>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={() => void refetch()}
@@ -88,8 +149,32 @@ export function ArrivalsBoard() {
         </div>
       </div>
 
-      {/* Error state */}
-      {isError && (
+      {/* Transient background refresh error warning (preserves last successful data) */}
+      {hasError && arrivals && arrivals.length > 0 && (
+        <div
+          role="alert"
+          className="bg-amber-950/80 border border-amber-800 text-amber-200 text-xs rounded-md p-3 flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2">
+            <span>⚠️</span>
+            <span>
+              Live update failed ({error instanceof Error ? error.message : "Network error"}).
+              Displaying predictions from {formatLastUpdated(dataUpdatedAt, selectedStop.timezone)}.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            className="text-amber-100 underline hover:no-underline text-xs ml-2 cursor-pointer shrink-0 disabled:opacity-50"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Initial load error state (no data available) */}
+      {hasError && (!arrivals || arrivals.length === 0) && (
         <div
           role="alert"
           className="bg-red-950/60 border border-red-800 text-red-300 text-sm rounded-md p-3 flex items-center justify-between"
