@@ -84,9 +84,15 @@ Establishes the normalized PostgreSQL/PostGIS database schema scoped for multi-c
 - **`Calendar` & `CalendarDate`**: Weekly service patterns and date-specific exceptions.
 - **Alembic Migration**: `0001_initial_transit_models` providing reproducible upgrade and downgrade DDL with explicit PostGIS extension setup.
 
-### 1. GTFS Static Ingestion Service — `Planned`
+### 1. GTFS Static Ingestion Service — `Implemented (Slice 1.2)`
 
-Downloads GTFS static feeds (ZIP archives containing CSV files), parses them according to the GTFS specification, and populates the database with routes, stops, trips, stop times, calendar entries, and route shapes. Runs on-demand or on a configurable schedule to keep data current.
+Orchestrates downloading, inspecting, parsing, and persisting GTFS Schedule feeds into the database:
+- **ZIP Safety Inspection** (`archive.py`): In-memory ZIP inspection enforcing archive size bounds, decompressed size limits, compression ratio bounds (zip bomb protection), directory traversal prevention, and encryption rejection.
+- **Resilient Downloader** (`downloader.py`): Streaming HTTP client enforcing timeouts and size bounds, masking credentials in logs and query parameters.
+- **GTFS Schedule Parser & Validator** (`parser.py`): CSV table parser strictly validating headers, row types, coordinate bounds, service-day times (including hours >= 24), single-agency feed omission of `agency_id`, multi-agency references, calendar and calendar-dates schedule validation, and relational integrity.
+- **Feed-Scoped Atomic Importer** (`importer.py`): Transactional persistence engine that clears prior data for the feed in reverse foreign key order, resolves parent-station hierarchies, inserts high-volume stop times in bounded batches, updates feed operational timestamps, and rolls back atomically on any failure.
+- **Administrative CLI** (`cli.py`): CLI interface (`python -m app.services.gtfs.cli ingest --feed-id <ID>`) for operators and background jobs without exposing unauthenticated public endpoints.
+- **Forward Migration**: `0002_optional_agency_id` allowing `agency_id` to be nullable for standard single-agency feeds.
 
 ### 2. GTFS-Realtime Service — `Planned`
 

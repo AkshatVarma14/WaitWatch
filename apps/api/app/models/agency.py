@@ -18,9 +18,7 @@ class Agency(Base):
 
     __tablename__ = "agencies"
     __table_args__ = (
-        UniqueConstraint(
-            "feed_id", "agency_id", name="uq_agencies_feed_agency_id"
-        ),
+        UniqueConstraint("feed_id", "agency_id", name="uq_agencies_feed_agency_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -29,7 +27,8 @@ class Agency(Base):
         nullable=False,
         index=True,
     )
-    agency_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # agency_id is optional in GTFS when only a single agency is present
+    agency_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
     timezone: Mapped[str] = mapped_column(String(100), nullable=False)

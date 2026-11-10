@@ -15,15 +15,21 @@ def test_alembic_config_resolves() -> None:
     alembic_cfg = Config(str(ini_path))
     script = ScriptDirectory.from_config(alembic_cfg)
 
-    # Verify initial migration is present
+    # Verify head migration is 0002_optional_agency_id
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "0001_initial_transit_models"
+    assert heads[0] == "0002_optional_agency_id"
 
-    rev = script.get_revision("0001_initial_transit_models")
-    assert rev is not None
-    assert rev.down_revision is None
-    assert "transit models" in (rev.doc or "").lower()
+    # Verify initial migration
+    rev_0001 = script.get_revision("0001_initial_transit_models")
+    assert rev_0001 is not None
+    assert rev_0001.down_revision is None
+    assert "transit models" in (rev_0001.doc or "").lower()
+
+    # Verify forward migration 0002
+    rev_0002 = script.get_revision("0002_optional_agency_id")
+    assert rev_0002 is not None
+    assert rev_0002.down_revision == "0001_initial_transit_models"
 
 
 def test_migration_environment_settings_integration() -> None:

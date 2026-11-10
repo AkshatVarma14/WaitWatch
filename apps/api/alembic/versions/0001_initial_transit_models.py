@@ -89,9 +89,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_transit_feeds_slug", "transit_feeds", ["slug"], unique=True
-    )
+    op.create_index("ix_transit_feeds_slug", "transit_feeds", ["slug"], unique=True)
 
     # -------------------------------------------------------------------------
     # 2. agencies
@@ -120,13 +118,9 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "feed_id", "agency_id", name="uq_agencies_feed_agency_id"
-        ),
+        sa.UniqueConstraint("feed_id", "agency_id", name="uq_agencies_feed_agency_id"),
     )
     op.create_index("ix_agencies_feed_id", "agencies", ["feed_id"], unique=False)
 
@@ -159,21 +153,13 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["agency_id"], ["agencies.id"], ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["agency_id"], ["agencies.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "feed_id", "route_id", name="uq_routes_feed_route_id"
-        ),
+        sa.UniqueConstraint("feed_id", "route_id", name="uq_routes_feed_route_id"),
     )
     op.create_index("ix_routes_feed_id", "routes", ["feed_id"], unique=False)
-    op.create_index(
-        "ix_routes_agency_id", "routes", ["agency_id"], unique=False
-    )
+    op.create_index("ix_routes_agency_id", "routes", ["agency_id"], unique=False)
     op.create_index(
         "ix_routes_feed_route_type",
         "routes",
@@ -202,9 +188,7 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("parent_station_id", sa.Integer(), nullable=True),
-        sa.Column(
-            "location_type", sa.Integer(), server_default="0", nullable=False
-        ),
+        sa.Column("location_type", sa.Integer(), server_default="0", nullable=False),
         sa.Column(
             "wheelchair_boarding",
             sa.Integer(),
@@ -225,9 +209,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["parent_station_id"], ["stops.id"], ondelete="SET NULL"
         ),
@@ -241,9 +223,7 @@ def upgrade() -> None:
         ["parent_station_id"],
         unique=False,
     )
-    op.create_index(
-        "ix_stops_feed_name", "stops", ["feed_id", "name"], unique=False
-    )
+    op.create_index("ix_stops_feed_name", "stops", ["feed_id", "name"], unique=False)
     op.create_index(
         "ix_stops_point",
         "stops",
@@ -273,9 +253,7 @@ def upgrade() -> None:
             server_default="0",
             nullable=False,
         ),
-        sa.Column(
-            "bikes_allowed", sa.Integer(), server_default="0", nullable=False
-        ),
+        sa.Column("bikes_allowed", sa.Integer(), server_default="0", nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -288,20 +266,14 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["route_id"], ["routes.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["route_id"], ["routes.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("feed_id", "trip_id", name="uq_trips_feed_trip_id"),
     )
     op.create_index("ix_trips_feed_id", "trips", ["feed_id"], unique=False)
     op.create_index("ix_trips_route_id", "trips", ["route_id"], unique=False)
-    op.create_index(
-        "ix_trips_service_id", "trips", ["service_id"], unique=False
-    )
+    op.create_index("ix_trips_service_id", "trips", ["service_id"], unique=False)
     op.create_index(
         "ix_trips_feed_service_id",
         "trips",
@@ -328,25 +300,17 @@ def upgrade() -> None:
         sa.Column("departure_time", sa.String(length=8), nullable=False),
         sa.Column("stop_sequence", sa.Integer(), nullable=False),
         sa.Column("stop_headsign", sa.String(length=255), nullable=True),
-        sa.Column(
-            "pickup_type", sa.Integer(), server_default="0", nullable=False
-        ),
-        sa.Column(
-            "drop_off_type", sa.Integer(), server_default="0", nullable=False
-        ),
+        sa.Column("pickup_type", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("drop_off_type", sa.Integer(), server_default="0", nullable=False),
         sa.Column("shape_dist_traveled", sa.Float(), nullable=True),
-        sa.Column(
-            "timepoint", sa.Integer(), server_default="1", nullable=False
-        ),
+        sa.Column("timepoint", sa.Integer(), server_default="1", nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["stop_id"], ["stops.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["trip_id"], ["trips.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -354,15 +318,9 @@ def upgrade() -> None:
             "trip_id", "stop_sequence", name="uq_stop_times_trip_sequence"
         ),
     )
-    op.create_index(
-        "ix_stop_times_feed_id", "stop_times", ["feed_id"], unique=False
-    )
-    op.create_index(
-        "ix_stop_times_trip_id", "stop_times", ["trip_id"], unique=False
-    )
-    op.create_index(
-        "ix_stop_times_stop_id", "stop_times", ["stop_id"], unique=False
-    )
+    op.create_index("ix_stop_times_feed_id", "stop_times", ["feed_id"], unique=False)
+    op.create_index("ix_stop_times_trip_id", "stop_times", ["trip_id"], unique=False)
+    op.create_index("ix_stop_times_stop_id", "stop_times", ["stop_id"], unique=False)
     op.create_index(
         "ix_stop_times_stop_arrival",
         "stop_times",
@@ -440,17 +398,13 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "feed_id", "service_id", name="uq_calendars_feed_service_id"
         ),
     )
-    op.create_index(
-        "ix_calendars_feed_id", "calendars", ["feed_id"], unique=False
-    )
+    op.create_index("ix_calendars_feed_id", "calendars", ["feed_id"], unique=False)
     op.create_index(
         "ix_calendars_feed_service_dates",
         "calendars",
@@ -474,9 +428,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["feed_id"], ["transit_feeds.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "feed_id",

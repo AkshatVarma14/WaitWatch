@@ -59,12 +59,8 @@ class StopTime(Base):
 
     stop_headsign: Mapped[str | None] = mapped_column(String(255), nullable=True)
     pickup_type: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    drop_off_type: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
-    shape_dist_traveled: Mapped[float | None] = mapped_column(
-        Float, nullable=True
-    )
+    drop_off_type: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    shape_dist_traveled: Mapped[float | None] = mapped_column(Float, nullable=True)
     timepoint: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

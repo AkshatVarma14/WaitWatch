@@ -43,23 +43,17 @@ class Trip(Base):
         nullable=False,
         index=True,
     )
-    service_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, index=True
-    )
+    service_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     trip_id: Mapped[str] = mapped_column(String(255), nullable=False)
     trip_headsign: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    trip_short_name: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )
+    trip_short_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     direction_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     block_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     shape_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     wheelchair_accessible: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
     )
-    bikes_allowed: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
+    bikes_allowed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

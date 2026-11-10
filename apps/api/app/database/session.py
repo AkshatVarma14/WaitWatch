@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 from geoalchemy2 import Geography
+from geoalchemy2.functions import ST_AsBinary, ST_GeogFromText
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
@@ -14,11 +15,26 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Register SQLite fallback compilation for GeoAlchemy2 Geography
+
+# Register SQLite fallback compilation for GeoAlchemy2 Geography and functions
 # to enable in-memory SQLite unit testing without requiring SpatiaLite.
 @compiles(Geography, "sqlite")
 def _compile_geography_sqlite(type_: Geography, compiler: object, **kw: object) -> str:
     return "BLOB"
+
+
+@compiles(ST_GeogFromText, "sqlite")
+def _compile_st_geog_from_text(element: object, compiler: object, **kw: object) -> str:
+    # On SQLite without SpatiaLite, treat ST_GeogFromText as identity on the text WKT
+    return compiler.process(element.clauses.clauses[0], **kw)
+
+
+@compiles(ST_AsBinary, "sqlite")
+def _compile_st_as_binary_sqlite(
+    element: object, compiler: object, **kw: object
+) -> str:
+    # On SQLite without SpatiaLite, treat ST_AsBinary as identity on the stored column
+    return compiler.process(element.clauses.clauses[0], **kw)
 
 
 class Base(DeclarativeBase):

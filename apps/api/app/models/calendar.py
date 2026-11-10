@@ -27,12 +27,8 @@ class Calendar(Base):
 
     __tablename__ = "calendars"
     __table_args__ = (
-        UniqueConstraint(
-            "feed_id", "service_id", name="uq_calendars_feed_service_id"
-        ),
-        Index(
-            "ix_calendars_feed_service_dates", "feed_id", "start_date", "end_date"
-        ),
+        UniqueConstraint("feed_id", "service_id", name="uq_calendars_feed_service_id"),
+        Index("ix_calendars_feed_service_dates", "feed_id", "start_date", "end_date"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -45,16 +41,10 @@ class Calendar(Base):
 
     monday: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     tuesday: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    wednesday: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
-    thursday: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    wednesday: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    thursday: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     friday: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    saturday: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    saturday: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sunday: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     start_date: Mapped[date] = mapped_column(Date, nullable=False)

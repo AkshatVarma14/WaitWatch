@@ -155,7 +155,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 | Stage | Description | Status |
 |-------|------------|--------|
 | Stage 0 | Project initialization and foundation | ✅ Complete |
-| Stage 1 | GTFS static data ingestion | 🔄 In Progress (Slice 1.1 Complete) |
+| Stage 1 | GTFS static data ingestion | 🔄 In Progress (Slices 1.1 & 1.2 Complete) |
 | Stage 2 | GTFS-Realtime integration | ⬜ Not started |
 | Stage 3 | ETA prediction | ⬜ Not started |
 | Stage 4 | UI polish and deployment | ⬜ Not started |
@@ -163,6 +163,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 ### Completed Milestones
 - **Stage 0**: Full foundation with React/TS/Tailwind frontend, FastAPI backend, CI workflows, and documentation.
 - **Stage 1, Slice 1.1**: Database foundation, PostgreSQL/PostGIS connection handling, transit data models (`TransitFeed`, `Agency`, `Route`, `Stop`, `Trip`, `StopTime`, `Calendar`, `CalendarDate`), and initial Alembic migration (`0001_initial_transit_models`).
+- **Stage 1, Slice 1.2**: GTFS Static Ingestion Pipeline (`GTFSIngestionService`), in-memory safe ZIP extraction (protecting against decompression bombs, path traversal, encryption), robust CSV parsing with full GTFS Schedule compliance (single-agency without `agency_id`, multi-agency validation, post-midnight times e.g. `25:35:00`, calendar exception dates, coordinate bounds, referential checks), feed-scoped atomic/idempotent persistence, forward migration `0002_optional_agency_id`, and administrative CLI.
 
 ## License
 

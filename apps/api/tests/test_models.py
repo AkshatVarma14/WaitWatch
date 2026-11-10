@@ -72,6 +72,7 @@ def test_agency_model_structure() -> None:
         "timezone",
         "phone",
     }.issubset(columns)
+    assert mapper.columns["agency_id"].nullable is True
 
     relationships = {r.key for r in mapper.relationships}
     assert {"feed", "routes"}.issubset(relationships)

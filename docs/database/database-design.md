@@ -56,7 +56,7 @@ Stores transit agency information parsed from GTFS `agency.txt`.
 |---|---|---|---|
 | `id` | `INTEGER` | PRIMARY KEY, AUTOINCREMENT | Internal synthetic identifier |
 | `feed_id` | `INTEGER` | FK (`transit_feeds.id` ON DELETE CASCADE), INDEX | Parent transit feed |
-| `agency_id` | `VARCHAR(255)` | NOT NULL | Original GTFS agency ID |
+| `agency_id` | `VARCHAR(255)` | NULLABLE | Original GTFS agency ID (optional in single-agency feeds; altered in migration 0002) |
 | `name` | `VARCHAR(255)` | NOT NULL | Full name of the transit agency |
 | `url` | `VARCHAR(2048)` | NOT NULL | Official agency URL |
 | `timezone` | `VARCHAR(100)` | NOT NULL | IANA timezone (e.g., "Asia/Kolkata") |
@@ -237,14 +237,32 @@ For local unit testing without PostGIS/SpatiaLite, a fallback compilation rule c
 
 ## 4. Alembic Migration Structure
 
-- **Initial Revision**: `0001_initial_transit_models`
-- **Location**: `apps/api/alembic/versions/0001_initial_transit_models.py`
+- **Revisions**:
+  - `0001_initial_transit_models`: Initial schema creation for all 8 transit tables with PostGIS extension.
+  - `0002_optional_agency_id`: Alter `agencies.agency_id` to `nullable=True` to support valid single-agency GTFS Schedule feeds per specification.
 - **Offline Generation**:
   ```bash
   alembic upgrade head --sql
-  alembic downgrade 0001_initial_transit_models:base --sql
+  alembic downgrade 0002_optional_agency_id:0001_initial_transit_models --sql
   ```
 - **Live Upgrade**:
   ```bash
   alembic upgrade head
   ```
+
+---
+
+## 5. Feed-Scoped Ingestion & Persistence Strategy
+
+The static ingestion pipeline (`GTFSIngestionService`) is designed with strict transactional safety:
+
+1. **Feed Isolation**: All operations are scoped strictly to a single `feed_id`.
+2. **Idempotent Atomic Replacement**:
+   - Deletes existing records for that feed in reverse foreign key order (`stop_times` → `trips` → `routes` → `stops` → `calendar_dates` → `calendars` → `agencies`).
+   - Inserts newly parsed entities in foreign key order, establishing internal primary key relationships.
+   - For stops with platform/parent station hierarchy, inserts all stops first, then maps and updates `parent_station_id`.
+3. **Bounded Batch Persistence**:
+   - `stop_times` rows (often tens of thousands) are committed in bounded batches of 1,000 rows to prevent memory exhaustion and database lock saturation.
+4. **All-or-Nothing Transactions**:
+   - Entire process runs within a single database transaction.
+   - Any validation error, foreign key violation, or unexpected exception triggers an immediate session rollback, leaving any prior feed data completely intact.

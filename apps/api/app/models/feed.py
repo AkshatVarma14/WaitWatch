@@ -33,15 +33,11 @@ class TransitFeed(Base):
     realtime_trip_updates_url: Mapped[str | None] = mapped_column(
         String(2048), nullable=True
     )
-    realtime_alerts_url: Mapped[str | None] = mapped_column(
-        String(2048), nullable=True
-    )
+    realtime_alerts_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
 
     # Reference to the environment variable holding the transit API key
     # (never store the raw key)
-    api_key_env_var: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )
+    api_key_env_var: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Operational status: active, inactive, error, maintenance
     feed_status: Mapped[str] = mapped_column(

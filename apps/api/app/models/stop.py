@@ -62,12 +62,8 @@ class Stop(Base):
         nullable=True,
         index=True,
     )
-    location_type: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
-    wheelchair_boarding: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
+    location_type: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    wheelchair_boarding: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     platform_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
