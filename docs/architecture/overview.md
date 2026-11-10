@@ -120,17 +120,24 @@ Polls and parses GTFS-Realtime Protocol Buffer feeds:
   - Background polling scheduler
   - WebSocket broadcaster for live position streaming
 
-### 3. ETA Prediction Service — `In Progress (Slice 3.1 Implemented)`
+### 3. ETA Prediction Service — `Implemented (Slice 3.2)`
 
-Calculates estimated arrival times at stops using:
-- Current live vehicle position and speed (`vehicle_positions` snapshot)
-- Longitudinal vehicle observation history (`vehicle_observations` table)
-- Scheduled stop times from GTFS static data (`stop_times`, `trips`)
-- Historical delay patterns for the same route/time-of-day/day-of-week
+Calculates deterministic estimated arrival times (ETAs) at transit stops:
+- **Endpoint**: `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals` (supports feed slug or numeric ID).
+- **Core Components (`services/prediction/`)**:
+  - `ArrivalPredictionService`: Evaluates upcoming arrivals at a target stop from live vehicle positions.
+  - Active service resolution: Evaluates GTFS `calendars` and `calendar_dates` exceptions (added/removed) against the agency timezone.
+  - Extended hours support: Parses GTFS times > 24:00 (e.g. `25:30:00`) mapping to early morning departures on the next calendar day.
+  - Telemetry freshness enforcement: Rejects vehicle snapshots older than 300 seconds (5 minutes) or future-skewed beyond 60 seconds.
+  - Downstream eligibility filtering: Evaluates vehicles on active trips where `target_stop_sequence >= vehicle.current_stop_sequence`.
+  - Historical median delay adjustment:
+    $$\Delta t_i = T_{\text{obs}}(P_i) - T_{\text{sched}}(P_i) \quad \text{for earlier STOPPED\_AT stops on the same trip}$$
+    $$\Delta t_{\text{adj}} = \text{median}(\{\Delta t_i\}) \quad (\text{sample count} \ge 1)$$
+    $$T_{\text{est}} = T_{\text{sched}} + \Delta t_{\text{adj}} \quad (\text{labeled } \texttt{HISTORY\_ADJUSTED})$$
+  - Schedule fallback: When insufficient historical samples exist, returns $T_{\text{est}} = T_{\text{sched}}$ with $\Delta t = 0$ (labeled $\texttt{SCHEDULE\_ONLY}$).
+  - Assumptions & Limits: Assumes uniform delay propagation without signal timing or shape geometry simulation.
 
-Produces ETA updates that are broadcast via WebSocket to subscribed clients.
-
-### 4. REST API — `Implemented (Slice 1.3)`
+### 4. REST API — `Implemented (Slices 1.3 & 3.2)`
 
 Currently implemented:
 - Health check (`GET /api/v1/health`, `GET /health`)
@@ -145,6 +152,8 @@ Currently implemented:
   - `GET /api/v1/feeds/{feed_slug}/stops` — list and search stops (`q`, bounded pagination)
   - `GET /api/v1/feeds/{feed_slug}/stops/nearby` — geospatial proximity stop search (`latitude`, `longitude`, `radius_meters`, `limit`) via PostGIS `ST_DWithin`/`ST_Distance` with SQLite fallback
   - `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}` — stop details with parent station resolution
+- Stop arrivals & ETA prediction:
+  - `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals` — predicted vehicle arrivals at stop, ordered by estimated arrival time, with delay seconds, source labeling, and observation timestamps.
 - Error handling: Sanitized 503 response on database unavailability without credential leakage
 - Consistent response envelopes (`ItemEnvelope`, `PaginatedResponse` with `PaginationMeta`)
 

@@ -10,6 +10,7 @@ from app.schemas.transit import (
     PaginationMeta,
     RouteDetailResponse,
     RouteResponse,
+    StopArrivalPrediction,
     StopDetailResponse,
     StopResponse,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "PaginationMeta",
     "RouteDetailResponse",
     "RouteResponse",
+    "StopArrivalPrediction",
     "StopDetailResponse",
     "StopResponse",
 ]

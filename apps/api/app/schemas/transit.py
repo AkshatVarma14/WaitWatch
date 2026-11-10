@@ -145,3 +145,37 @@ class NearbyStopResponse(StopResponse):
     distance_meters: float = Field(
         ..., ge=0.0, description="Distance in meters from search point"
     )
+
+
+class StopArrivalPrediction(BaseModel):
+    """Predicted arrival for a trip/vehicle at a specific stop."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    feed_slug: str = Field(..., description="Feed slug identifier")
+    feed_id: int = Field(..., description="Feed internal database identifier")
+    stop_id: str = Field(..., description="GTFS stop identifier")
+    trip_id: str = Field(..., description="GTFS trip identifier")
+    route_id: str = Field(..., description="GTFS route identifier")
+    route_short_name: str | None = Field(None, description="Public route short name")
+    trip_headsign: str | None = Field(None, description="Trip headsign")
+    vehicle_id: str | None = Field(None, description="Agency vehicle identifier")
+    stop_sequence: int = Field(..., description="Stop sequence on this trip")
+    scheduled_arrival_time: datetime = Field(
+        ..., description="Scheduled arrival timestamp in UTC"
+    )
+    estimated_arrival_time: datetime = Field(
+        ..., description="Estimated arrival timestamp in UTC"
+    )
+    delay_seconds: int = Field(
+        0,
+        description="Estimated delay in seconds (positive=late, 0=on time)",
+    )
+    prediction_source: str = Field(
+        ...,
+        description="Source of prediction ('SCHEDULE_ONLY' or 'HISTORY_ADJUSTED')",
+    )
+    source_observation_time: datetime | None = Field(
+        None,
+        description="Timestamp of the vehicle telemetry observation in UTC",
+    )

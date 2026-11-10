@@ -388,4 +388,74 @@ This document tracks verified stage milestones, implementation slices, verificat
   - No public REST API endpoints expose historical observations directly (internal query helper only for ETA service).
   - Background polling daemon / cron scheduler is not yet active (manual/CLI triggering only).
 - **Next Authorized Step**:
-  - **Stage 3, Slice 3.2**: Historical Travel Time & Delay Calculation (or ETA Prediction Engine).
+  - **Stage 3, Slice 3.2**: Stop Arrival Predictions & ETA Engine (Completed below).
+
+---
+
+### Slice 3.2: Stop Arrival Predictions & ETA Engine (Completed & Verified)
+
+- **Date**: 2026-11-10
+- **Goal**: Implement read-only, feed-scoped stop arrival prediction API (`GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`), evaluating live vehicle snapshots, GTFS static schedules, calendar service activity and exceptions, agency timezones, extended-hour (>24:00) service times, downstream stop sequence filtering, realtime telemetry freshness windows (<= 300s), and deterministic historical median delay adjustments with schedule-only fallback.
+
+#### Implemented Components
+1. **Prediction Schema** (`apps/api/app/schemas/transit.py`, `apps/api/app/schemas/__init__.py`):
+   - Defined `StopArrivalPrediction` schema with typed fields: `feed_slug`, `feed_id`, `stop_id`, `trip_id`, `route_id`, `route_short_name`, `trip_headsign`, `vehicle_id`, `stop_sequence`, `scheduled_arrival_time`, `estimated_arrival_time`, `delay_seconds`, `prediction_source`, and `source_observation_time`.
+2. **Prediction Service** (`apps/api/app/services/prediction/service.py`, `apps/api/app/services/prediction/__init__.py`):
+   - `ArrivalPredictionService`:
+     - Resolves feed/stop agency timezone safely with UTC fallback.
+     - `get_active_service_ids`: Evaluates GTFS `calendars` and `calendar_dates` exceptions (`exception_type=1` added, `exception_type=2` removed) on target service date.
+     - `parse_gtfs_time_to_seconds`: Handles extended GTFS service hours (> 24:00, e.g. `25:15:00` for overnight trips) mapping to the next calendar day.
+     - Freshness window: Rejects vehicle telemetry older than 300 seconds (5 minutes) or future-skewed beyond 60 seconds.
+     - Downstream filtering: Only evaluates active trips where target stop sequence is downstream of the vehicle's `current_stop_sequence` (`target_seq >= curr_seq`). Gracefully skips vehicles without trip or sequence evidence.
+     - Deterministic delay adjustment: Queries recent historical `STOPPED_AT` observations for the same trip/vehicle at earlier scheduled stops, computing:
+       $$\Delta t_i = T_{\text{obs}}(P_i) - T_{\text{sched}}(P_i)$$
+       $$\text{delay\_seconds} = \text{median}(\{\Delta t_i\}) \quad (\text{when samples} \ge 1)$$
+       $$T_{\text{est}} = T_{\text{sched}} + \text{delay\_seconds} \quad (\text{labeled } \texttt{HISTORY\_ADJUSTED})$$
+     - Schedule fallback: When history has insufficient `STOPPED_AT` observations, returns $T_{\text{est}} = T_{\text{sched}}$ with $\text{delay\_seconds} = 0$ (labeled $\texttt{SCHEDULE\_ONLY}$).
+     - Result ordering & limits: Orders deterministically by `estimated_arrival_time.asc()`, then `trip_id`, and caps by `limit`.
+3. **Arrivals REST Endpoint** (`apps/api/app/api/transit.py`):
+   - `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals` (also mounted at `/feeds/{feed_slug}/stops/{stop_id}/arrivals`).
+   - Supports looking up feed by slug or numeric ID (`_get_feed_by_slug`).
+   - Validates existence of feed and stop (returns 404 on missing entities).
+   - Sanitized 503 error handling on database service unavailability.
+   - Response wrapped in standard `ItemEnvelope[list[StopArrivalPrediction]]`.
+4. **Comprehensive Test Suite** (`apps/api/tests/test_stop_arrivals.py`):
+   - 9 deterministic unit and integration tests covering:
+     1. Active service calendar evaluation and exceptions (`exception_type=1` added, `exception_type=2` removed).
+     2. Extended service day hours (>24:00) mapping accurately to next day.
+     3. Downstream stop sequence filtering.
+     4. Stale and missing telemetry skipping.
+     5. History median adjustment and schedule-only fallback.
+     6. Feed isolation across distinct feeds.
+     7. Bounded ordering by estimated arrival time and limit capping.
+     8. Invalid feed/stop identifiers (404) and database outages (503).
+     9. GTFS time parser helper unit tests.
+
+#### Verification Evidence
+- **Pytest**: 105 tests passed in 11.77s (`py -3.12 -m pytest apps/api/tests -v`).
+- **Ruff**: Zero lint errors and clean formatting across all 56 files in `app/`, `tests/`, and `alembic/`.
+- **Python Compilation**: All backend modules compile cleanly (`py -3.12 -m compileall app tests alembic`).
+- **Alembic Offline Validation**: `alembic upgrade head --sql` validated clean static DDL.
+- **Frontend Regression**:
+  - `npm.cmd test -- --run`: 2 test files, 6 tests passed in 3.36s.
+  - `npm.cmd run build`: production build passed in 2.31s without errors.
+
+#### Changed / Added Files
+- `apps/api/pyproject.toml` (added `tzdata>=2024.1` for cross-platform IANA timezone support)
+- `apps/api/app/schemas/transit.py` (added `StopArrivalPrediction` schema)
+- `apps/api/app/schemas/__init__.py` (exported `StopArrivalPrediction`)
+- `apps/api/app/services/prediction/service.py` (arrival prediction service)
+- `apps/api/app/services/prediction/__init__.py` (exported prediction service)
+- `apps/api/app/api/transit.py` (added `GET /feeds/{feed_slug}/stops/{stop_id}/arrivals`)
+- `apps/api/tests/test_stop_arrivals.py` (9 new comprehensive tests)
+- `docs/architecture/overview.md` (updated ETA service and REST API documentation)
+- `README.md` (updated Stage 3 status to complete)
+- `docs/development-ledger.md` (this ledger)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - ETAs assume linear delay propagation from prior stops; traffic signal timing, route shapes, and segment-level speed distributions are not modeled.
+  - Live arrival predictions are accessed via HTTP pull; real-time push over WebSockets is not yet active.
+  - Trip updates / cancellations from GTFS-RT `TripUpdate` feeds are not yet ingested (planned for future expansion).
+- **Next Authorized Step**:
+  - **Stage 4, Slice 4.1**: Frontend Live Map & Stop ETA Display (or WebSocket live arrival streaming).

@@ -2,6 +2,7 @@
 
 import logging
 import math
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -23,9 +24,11 @@ from app.schemas.transit import (
     PaginationMeta,
     RouteDetailResponse,
     RouteResponse,
+    StopArrivalPrediction,
     StopDetailResponse,
     StopResponse,
 )
+from app.services.prediction import ArrivalPredictionService
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +50,13 @@ def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
 
 
 async def _get_feed_by_slug(session: AsyncSession, feed_slug: str) -> TransitFeed:
-    """Look up a transit feed by slug or raise 404."""
-    stmt = select(TransitFeed).where(TransitFeed.slug == feed_slug)
+    """Look up a transit feed by slug or numeric ID, or raise 404."""
+    if feed_slug.isdigit():
+        stmt = select(TransitFeed).where(
+            or_(TransitFeed.slug == feed_slug, TransitFeed.id == int(feed_slug))
+        )
+    else:
+        stmt = select(TransitFeed).where(TransitFeed.slug == feed_slug)
     result = await session.execute(stmt)
     feed = result.scalar_one_or_none()
     if not feed:
@@ -639,6 +647,71 @@ async def get_stop(
         raise
     except (OperationalError, DBAPIError, TimeoutError, OSError) as exc:
         logger.warning("Database unavailable in get_stop: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service is temporarily unavailable",
+        ) from exc
+
+
+@router.get(
+    "/feeds/{feed_slug}/stops/{stop_id}/arrivals",
+    response_model=ItemEnvelope[list[StopArrivalPrediction]],
+    summary="Get estimated arrival predictions for a stop",
+)
+async def get_stop_arrivals(
+    feed_slug: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=64,
+            pattern=r"^[a-zA-Z0-9_-]+$",
+            description="Feed slug or numeric ID identifier",
+        ),
+    ],
+    stop_id: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=255,
+            description="GTFS stop identifier",
+        ),
+    ],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=50,
+            description="Maximum arrival predictions to return (default 10, max 50)",
+        ),
+    ] = 10,
+    reference_time: Annotated[
+        datetime | None,
+        Query(
+            description=(
+                "Evaluation reference timestamp in ISO 8601 (defaults to current time)"
+            ),
+        ),
+    ] = None,
+) -> ItemEnvelope[list[StopArrivalPrediction]]:
+    """Predict upcoming stop arrivals using live vehicle positions and GTFS."""
+    try:
+        feed = await _get_feed_by_slug(session, feed_slug)
+        service = ArrivalPredictionService()
+        predictions = await service.predict_arrivals_for_stop(
+            session=session,
+            feed=feed,
+            stop_id=stop_id,
+            limit=limit,
+            reference_time=reference_time,
+        )
+        return ItemEnvelope(data=predictions)
+    except HTTPException:
+        raise
+    except (OperationalError, DBAPIError, TimeoutError, OSError) as exc:
+        logger.warning(
+            "Database unavailable in get_stop_arrivals: %s", type(exc).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service is temporarily unavailable",
