@@ -176,7 +176,7 @@ Provides fast, feed-aware direct stop-to-stop journey options:
 - **Endpoint**: `GET /api/v1/feeds/{feed_slug}/plan?origin_stop_id={id}&destination_stop_id={id}&time={HH:MM:SS}&date={YYYY-MM-DD}&limit={n}`
 - **Direct Query Strategy**: Single ANSI SQL join of `StopTime` aliased twice on `Trip.id` where `st_origin.stop_id == origin.id`, `st_dest.stop_id == dest.id`, and `st_origin.stop_sequence < st_dest.stop_sequence`.
 - **Calendar Filtering**: Evaluates active GTFS service IDs for target date (day-of-week matching between start and end date plus `CalendarDate` exception overrides).
-- **Time Filtering & Extended Hours**: Supports departure time cutoff and GTFS overnight schedules (>24:00).
+- **Time Filtering, Timezone Resolution & Extended Hours**: Supports departure time cutoff and GTFS overnight schedules (>24:00). When `date` or `time` is omitted, captures a single current UTC instant and converts it to the feed's IANA agency timezone (with `origin_stop.timezone` precedence and safe UTC fallback), deriving both default `target_date` and `target_time` from that same local instant to avoid day-boundary skews.
 - **GTFS-RT Delay Enrichment**: Evaluates recent `TripUpdate` records for matching trips, enriching itineraries with delay seconds, real-time adjusted arrival/departure times, and status (`REALTIME_DELAYED`, `REALTIME_EARLY`, `REALTIME_ON_TIME`, `SCHEDULED`).
 - **Interactive UI**: `TripPlanner` React component with stop dropdowns, stop swap button (`⇄`), departure time input, itinerary cards with route color badges, duration, intermediate stops, and "View Route on Map" route focus.
 

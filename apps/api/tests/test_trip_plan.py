@@ -1,11 +1,12 @@
 """Unit and integration tests for direct stop-to-stop trip planning (Slice 5.1)."""
 
 from collections.abc import AsyncGenerator
-from datetime import date
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -493,3 +494,151 @@ async def test_plan_trip_database_error_returns_503(client: AsyncClient):
         )
         assert resp.status_code == 503
         assert "temporarily unavailable" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_plan_trip_default_date_time_uses_agency_timezone(
+    client: AsyncClient,
+    trip_plan_db: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Ensure omitted date/time converts UTC instant to agency timezone.
+
+    At 2026-11-10 02:30:00 UTC, the local time in America/New_York (UTC-5) is
+    2026-11-09 21:30:00 EST. Both default target_date and target_time must be
+    derived from that single local instant, falling on the previous calendar date.
+    """
+    async with trip_plan_db() as session:
+        agency = (await session.execute(select(Agency).limit(1))).scalar_one()
+        agency.timezone = "America/New_York"
+        await session.commit()
+
+    fixed_utc = datetime(2026, 11, 10, 2, 30, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.api.transit._get_current_utc", lambda: fixed_utc)
+
+    resp = await client.get(
+        "/api/v1/feeds/planville/plan",
+        params={"origin_stop_id": "STOP_A", "destination_stop_id": "STOP_C"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    # In America/New_York, 02:30:00 UTC on 2026-11-10 is 21:30:00 on 2026-11-09
+    assert data["target_date"] == "2026-11-09"
+    assert data["target_time"] == "21:30:00"
+
+
+@pytest.mark.asyncio
+async def test_plan_trip_explicit_date_time_overrides_agency_timezone(
+    client: AsyncClient,
+    trip_plan_db: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Ensure explicit date/time query parameters override local agency defaults."""
+    async with trip_plan_db() as session:
+        agency = (await session.execute(select(Agency).limit(1))).scalar_one()
+        agency.timezone = "America/New_York"
+        await session.commit()
+
+    fixed_utc = datetime(2026, 11, 10, 2, 30, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.api.transit._get_current_utc", lambda: fixed_utc)
+
+    # 1. Both date and time explicitly supplied
+    resp1 = await client.get(
+        "/api/v1/feeds/planville/plan",
+        params={
+            "origin_stop_id": "STOP_A",
+            "destination_stop_id": "STOP_C",
+            "date": "2026-11-15",
+            "time": "14:00",
+        },
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["data"]["target_date"] == "2026-11-15"
+    assert resp1.json()["data"]["target_time"] == "14:00:00"
+
+    # 2. Explicit date only, time defaults to local instant (21:30:00)
+    resp2 = await client.get(
+        "/api/v1/feeds/planville/plan",
+        params={
+            "origin_stop_id": "STOP_A",
+            "destination_stop_id": "STOP_C",
+            "date": "2026-11-15",
+        },
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["data"]["target_date"] == "2026-11-15"
+    assert resp2.json()["data"]["target_time"] == "21:30:00"
+
+    # 3. Explicit time with GTFS extended hours (>24:00),
+    # date defaults to local (2026-11-09)
+    resp3 = await client.get(
+        "/api/v1/feeds/planville/plan",
+        params={
+            "origin_stop_id": "STOP_A",
+            "destination_stop_id": "STOP_C",
+            "time": "25:30:00",
+        },
+    )
+    assert resp3.status_code == 200
+    assert resp3.json()["data"]["target_date"] == "2026-11-09"
+    assert resp3.json()["data"]["target_time"] == "25:30:00"
+
+
+@pytest.mark.asyncio
+async def test_plan_trip_stop_timezone_overrides_agency_timezone(
+    client: AsyncClient,
+    trip_plan_db: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Ensure origin_stop.timezone overrides agency timezone when configured."""
+    async with trip_plan_db() as session:
+        agency = (await session.execute(select(Agency).limit(1))).scalar_one()
+        agency.timezone = "America/New_York"  # UTC-5
+        stop_a = (
+            await session.execute(select(Stop).where(Stop.stop_id == "STOP_A"))
+        ).scalar_one()
+        stop_a.timezone = "America/Los_Angeles"  # UTC-8
+        await session.commit()
+
+    fixed_utc = datetime(2026, 11, 10, 2, 30, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.api.transit._get_current_utc", lambda: fixed_utc)
+
+    resp = await client.get(
+        "/api/v1/feeds/planville/plan",
+        params={"origin_stop_id": "STOP_A", "destination_stop_id": "STOP_C"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    # In America/Los_Angeles, 02:30:00 UTC on 2026-11-10 is 18:30:00 on 2026-11-09
+    assert data["target_date"] == "2026-11-09"
+    assert data["target_time"] == "18:30:00"
+
+
+@pytest.mark.asyncio
+async def test_plan_trip_invalid_timezone_safely_falls_back_to_utc(
+    client: AsyncClient,
+    trip_plan_db: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Ensure malformed or unresolvable timezones fall back safely to UTC."""
+    async with trip_plan_db() as session:
+        agency = (await session.execute(select(Agency).limit(1))).scalar_one()
+        agency.timezone = "Invalid/Nonexistent_Timezone"
+        stop_a = (
+            await session.execute(select(Stop).where(Stop.stop_id == "STOP_A"))
+        ).scalar_one()
+        stop_a.timezone = None
+        await session.commit()
+
+    fixed_utc = datetime(2026, 11, 10, 2, 30, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.api.transit._get_current_utc", lambda: fixed_utc)
+
+    resp = await client.get(
+        "/api/v1/feeds/planville/plan",
+        params={"origin_stop_id": "STOP_A", "destination_stop_id": "STOP_C"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    # Falls back safely to UTC
+    assert data["target_date"] == "2026-11-10"
+    assert data["target_time"] == "02:30:00"

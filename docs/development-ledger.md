@@ -1112,3 +1112,42 @@ Implemented the direct route stop-to-stop trip planner, fulfilling the first ver
   - Production hosting and cloud deployment remain external to local Compose scaffolding.
 - **Next Roadmap Steps**:
   - Multi-transfer trip planning algorithm evaluation or user bookmarks/favorites.
+
+---
+
+### 2026-11-10 — Stage 5, Slice 5.1 Correction: Agency Timezone for Default Trip Planning Instant
+
+#### Overview
+Addressed a correctness finding in `apps/api/app/api/transit.py` where omitted `date` and `time` parameters previously defaulted from `datetime.now(UTC)`. Per the GTFS Schedule Reference, transit schedules operate in the agency's local service timezone (`agency.agency_timezone`). Deriving defaults in UTC risked querying against the wrong local service day or daytime window for non-UTC agencies (e.g. 02:30 UTC is 21:30 local on the preceding calendar day in US Eastern).
+
+#### Key Deliverables & Design Decisions
+1. **Feed Local Timezone Resolution** (`apps/api/app/api/transit.py`):
+   - Reused existing safe timezone resolver `resolve_feed_timezone` from `app.services.prediction`.
+   - Queries the stored IANA agency timezone (`Agency.timezone`) for the target feed.
+   - Evaluates `origin_stop.timezone` precedence (in accordance with GTFS specification where stop timezone overrides agency timezone when defined), falling back to `Agency.timezone`, and ultimately falling back safely to `UTC` without raising unhandled exceptions or requiring new dependencies or database migrations.
+2. **Unified Local Instant Derivation**:
+   - Helper function `_get_current_utc()` captures a single current UTC instant (`datetime.now(UTC)`).
+   - Converts the UTC instant to the resolved local timezone (`local_now = now_utc.astimezone(feed_tz)`).
+   - Derives both default `target_date` (`local_now.date()`) and default `target_time` (`local_now.strftime("%H:%M:%S")`) from that identical local instant, preventing day-boundary discrepancies.
+   - Preserves explicitly supplied query parameters: explicit `date` overrides default date; explicit `time` overrides default time (with support for GTFS extended hours e.g. `25:30:00` and `HH:MM` zero-padding).
+3. **Deterministic Backend Regression Coverage** (`apps/api/tests/test_trip_plan.py`):
+   - `test_plan_trip_default_date_time_uses_agency_timezone`: Fixes UTC instant to `2026-11-10 02:30:00 UTC` and proves `America/New_York` (UTC-5) agency resolves to local date `2026-11-09` and time `21:30:00`.
+   - `test_plan_trip_explicit_date_time_overrides_agency_timezone`: Verifies explicit dates/times completely override local defaults, including partial overrides (date-only, time-only) and GTFS extended hours (`25:30:00`).
+   - `test_plan_trip_stop_timezone_overrides_agency_timezone`: Verifies `origin_stop.timezone` overrides agency timezone when configured.
+   - `test_plan_trip_invalid_timezone_safely_falls_back_to_utc`: Verifies corrupted or unresolvable timezones fall back safely to UTC without throwing errors.
+
+#### Verification Evidence
+- **Backend Pytest**: 169 passed across 12 test suites in 16.97s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint or formatting errors, 69 files formatted cleanly (`py -3.12 -m ruff check apps/api; py -3.12 -m ruff format --check apps/api`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall apps/api/app apps/api/tests`).
+- **Frontend Vitest**: 104 passed across 8 test suites in 5.87s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Git Diff & Whitespace**: Zero whitespace errors (`git diff --check`).
+- **Secret Scan**: Clean, zero secrets detected.
+
+#### Changed Files
+- `apps/api/app/api/transit.py` (feed/stop timezone resolution and unified local default date/time derivation)
+- `apps/api/tests/test_trip_plan.py` (added 4 deterministic timezone regression tests)
+- `README.md` (updated milestone notes and test suite counts)
+- `docs/architecture/overview.md` (documented timezone resolution logic)
+- `docs/development-ledger.md` (this ledger entry)

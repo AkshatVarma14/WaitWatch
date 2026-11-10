@@ -247,11 +247,11 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - Feed-scoped trip planning API endpoint (`GET /api/v1/feeds/{feed_slug}/plan`) accepting `origin_stop_id`, `destination_stop_id`, optional `time` (`HH:MM:SS`), optional `date` (`YYYY-MM-DD`), and `limit`.
   - ANSI SQL-compliant single-query direct trip discovery joining aliased `stop_times` on `trips` (`st_origin.stop_sequence < st_dest.stop_sequence`) with route and stop metadata.
   - Active GTFS calendar and calendar exception evaluation resolving service availability for the target travel date.
-  - Departure time filtering supporting GTFS overnight/extended hours (`>24:00`).
+  - Departure time filtering supporting GTFS overnight/extended hours (`>24:00`), with agency/stop local timezone conversion (`resolve_feed_timezone`) when date or time is omitted to ensure planning against the correct local service day.
   - GTFS-Realtime `TripUpdate` delay enrichment associating delay seconds and adjusted estimated times with both origin departure and destination arrival, with delay status badges (`REALTIME_DELAYED`, `REALTIME_EARLY`, `REALTIME_ON_TIME`, `SCHEDULED`).
   - Responsive, accessible React frontend component (`TripPlanner`) with stop selectors, swap button (`⇄`), departure time input, TanStack Query integration, itinerary cards with route color badges, duration, intermediate stop counts, and "View Route on Map" interaction.
   - Clean tab navigation on Dashboard (`🚏 Stop Explorer & Arrivals` vs `🧭 Direct Trip Planner`).
-  - Comprehensive test suite: 104 Vitest frontend tests across 8 files, and 165 Pytest backend tests across 12 files.
+  - Comprehensive test suite: 104 Vitest frontend tests across 8 files, and 169 Pytest backend tests across 12 files.
 
 ## License
 

@@ -50,7 +50,10 @@ from app.schemas.transit import (
     TripItineraryResponse,
     TripPlanResponse,
 )
-from app.services.prediction import ArrivalPredictionService
+from app.services.prediction import (
+    ArrivalPredictionService,
+    resolve_feed_timezone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -944,6 +947,11 @@ async def get_stop_arrivals(
 # ---------------------------------------------------------------------------
 
 
+def _get_current_utc() -> datetime:
+    """Return the current UTC instant."""
+    return datetime.now(UTC)
+
+
 def _time_str_to_seconds(t_str: str) -> int:
     """Convert HH:MM or HH:MM:SS string to total seconds from start of service day."""
     parts = t_str.strip().split(":")
@@ -1051,13 +1059,21 @@ async def plan_trip(
     session: Annotated[AsyncSession, Depends(get_session)],
     date: Annotated[
         datetime_date | None,
-        Query(description="Travel date (defaults to current UTC date)"),
+        Query(
+            description=(
+                "Travel date in YYYY-MM-DD format "
+                "(defaults to current agency local date)"
+            )
+        ),
     ] = None,
     time: Annotated[
         str | None,
         Query(
             pattern=r"^\d{1,2}:\d{2}(:\d{2})?$",
-            description="Earliest departure time in HH:MM or HH:MM:SS format",
+            description=(
+                "Earliest departure time in HH:MM or HH:MM:SS format "
+                "(defaults to current agency local time)"
+            ),
         ),
     ] = None,
     limit: Annotated[
@@ -1110,17 +1126,27 @@ async def plan_trip(
                 ),
             )
 
-        target_date = date or datetime.now(UTC).date()
+        # Resolve feed local timezone for default date/time derivation
+        agency_stmt = select(Agency.timezone).where(Agency.feed_id == feed.id).limit(1)
+        agency_tz_str = (await session.execute(agency_stmt)).scalar_one_or_none()
+        feed_tz = resolve_feed_timezone(agency_tz_str, origin_stop.timezone)
+
+        # Capture one current UTC instant and convert to feed local time
+        now_utc = _get_current_utc()
+        local_now = now_utc.astimezone(feed_tz)
+
+        target_date = date if date is not None else local_now.date()
 
         # Normalize target time to HH:MM:SS
         if time:
             clean_time = time.strip()
-            if len(clean_time.split(":")) == 2:
-                target_time = f"{clean_time}:00"
-            else:
-                target_time = clean_time
+            parts = clean_time.split(":")
+            h = int(parts[0])
+            m = int(parts[1])
+            s = int(parts[2]) if len(parts) > 2 else 0
+            target_time = f"{h:02d}:{m:02d}:{s:02d}"
         else:
-            target_time = datetime.now(UTC).strftime("%H:%M:%S")
+            target_time = local_now.strftime("%H:%M:%S")
 
         # Resolve active service IDs for target date
         active_service_ids = await _get_active_service_ids_for_date(
