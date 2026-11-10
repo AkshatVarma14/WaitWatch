@@ -536,4 +536,3 @@ This document tracks verified stage milestones, implementation slices, verificat
   - Stop arrivals are currently refreshed via manual button or on initial load; automated polling or WebSocket push is not yet enabled.
 - **Next Authorized Step**:
   - **Stage 4, Slice 4.2**: Interactive Map Component & Route Visualization.
-
