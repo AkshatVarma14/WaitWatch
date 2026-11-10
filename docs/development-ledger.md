@@ -458,4 +458,82 @@ This document tracks verified stage milestones, implementation slices, verificat
   - Live arrival predictions are accessed via HTTP pull; real-time push over WebSockets is not yet active.
   - Trip updates / cancellations from GTFS-RT `TripUpdate` feeds are not yet ingested (planned for future expansion).
 - **Next Authorized Step**:
-  - **Stage 4, Slice 4.1**: Frontend Live Map & Stop ETA Display (or WebSocket live arrival streaming).
+  - **Stage 4, Slice 4.1**: Feed-Aware Transit Explorer & Live Arrivals (Completed below).
+
+---
+
+## Stage 4: UI Polish & Explorer Experience
+
+### Slice 4.1: Feed-Aware Transit Explorer & Live Arrivals (Completed & Verified)
+
+- **Date**: 2026-11-10
+- **Goal**: Implement the first full-featured web experience on top of the transit query and arrival prediction APIs: keyboard-accessible feed selector, feed-scoped stop search, live arrivals board with delay pills and source badges, agency timezone disclosures, feed isolation in state management, and full loading/empty/error recovery.
+
+#### Implemented Components
+1. **Public UI Feed Metadata Enrichment** (`apps/api/app/schemas/transit.py`, `apps/api/tests/test_transit_api.py`):
+   - Enriched `FeedSummaryResponse` with `id: int` and `last_realtime_poll_at: datetime | None`.
+   - Verified that `GET /api/v1/feeds` never leaks credentials, private URLs (`static_gtfs_url`), or API keys.
+2. **Frontend Architecture & Environment** (`apps/web/.env.example`, `apps/web/src/types/transit.ts`):
+   - Established `VITE_API_URL` convention defaulting safely to `http://localhost:8000`.
+   - Defined TypeScript models: `FeedSummary`, `StopSummary`, `StopArrivalPrediction`, `ItemEnvelope`, and `PaginatedResponse`.
+3. **API Client Layer** (`apps/web/src/lib/api.ts`):
+   - `fetchFeeds`: Retrieves list of configured feeds and public status from `/api/v1/feeds`.
+   - `fetchStops`: Queries stops with search string `q` and pagination from `/api/v1/feeds/{feed_slug}/stops`.
+   - `fetchArrivals`: Queries estimated arrival predictions from `/api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`.
+   - Comprehensive error extraction parsing backend JSON `detail` messages for user display.
+4. **Time & Delay Formatters** (`apps/web/src/lib/formatters.ts`):
+   - `formatTime`: Converts ISO 8601 timestamps to readable 12-hour times with agency timezone (`timeZone`) support and graceful local-browser fallback.
+   - `formatDelay`: Categorizes delays (`>60s` -> `+X min late`, `<-60s` -> `X min early`, within $\pm 60$s -> `On time`) with high-contrast color badges.
+   - `formatPredictionSource`: Distinguishes `HISTORY_ADJUSTED` ("Live + History") from `SCHEDULE_ONLY` ("Schedule") with explanatory tooltips.
+   - `formatObservationAge`: Humanizes vehicle telemetry timestamps (e.g. `25s ago`, `5m ago`).
+5. **Feed-Isolated State Management** (`apps/web/src/stores/appStore.ts`):
+   - Zustand store tracking `selectedFeedSlug`, `selectedStop`, and backward-compatible `selectedCity`.
+   - **Feed Isolation**: Setting or switching `selectedFeedSlug` automatically resets `selectedStop` to `null`, preventing stale stops or arrivals from one feed persisting in another.
+6. **Accessible UI Components & Dashboard** (`apps/web/src/components/`, `apps/web/src/pages/Dashboard.tsx`):
+   - `FeedSelector`: Accessible `<select>` combobox with loading indicator, error retry button, feed status pill, and live tracking status pill.
+   - `StopSearch`: Labeled search input with debounced query, clear button, accessible result list with wheelchair badges, and empty/error states.
+   - `ArrivalsBoard`: Stop-level board with route badge, headsign, scheduled vs estimated times, delay badge, prediction source badge, telemetry age, agency timezone note, and manual refresh button.
+   - `Dashboard`: Clean two-column responsive grid layout adapting to mobile viewports with semantic HTML landmarks (`<header>`, `<main>`, `<section>`, `<footer>`).
+7. **Comprehensive Unit & Integration Test Suites**:
+   - `apps/web/src/__tests__/appStore.test.ts` (6 tests: initial state, feed setting, stop selection, feed isolation, reset, backward compatibility).
+   - `apps/web/src/__tests__/formatters.test.ts` (14 tests: time formatting, timezone support, fallback, delay classification, source badges, observation age).
+   - `apps/web/src/__tests__/api.test.ts` (7 tests: fetchApi 200, error extraction, feeds, stops, arrivals, health).
+   - `apps/web/src/__tests__/TransitExplorer.test.tsx` (14 tests: feed selection, stop search, arrivals board, manual refresh, empty/error states, feed isolation end-to-end).
+   - `apps/web/src/__tests__/Dashboard.test.tsx` (5 tests: landmarks, headings, sections, badges).
+
+#### Verification Evidence
+- **Frontend Vitest**: 46 tests passed across 5 test suites in 3.32s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite in 1.69s (`npm.cmd run build`).
+- **Backend Pytest**: 105 tests passed in 10.27s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero lint errors and clean formatting across 56 files (`py -3.12 -m ruff check app tests`, `py -3.12 -m ruff format --check app tests`).
+- **Backend Compilation**: Clean bytecode compilation with Python 3.12 (`py -3.12 -m compileall app tests`).
+
+#### Changed / Added Files
+- `apps/api/app/schemas/transit.py` (added `id` and `last_realtime_poll_at` to `FeedSummaryResponse`)
+- `apps/api/tests/test_transit_api.py` (verified public UI feed metadata and sensitive field omission)
+- `apps/web/.env.example` (new environment configuration template for Vite)
+- `apps/web/src/types/transit.ts` (new TypeScript transit domain interfaces)
+- `apps/web/src/lib/api.ts` (transit API client methods and error handling)
+- `apps/web/src/lib/formatters.ts` (time, delay, source, and observation age formatters)
+- `apps/web/src/stores/appStore.ts` (feed isolation state store)
+- `apps/web/src/components/feedSelector.tsx` (feed selector component)
+- `apps/web/src/components/stopSearch.tsx` (feed-scoped stop search component)
+- `apps/web/src/components/arrivalsBoard.tsx` (live arrivals board component)
+- `apps/web/src/pages/Dashboard.tsx` (responsive transit explorer layout)
+- `apps/web/src/__tests__/appStore.test.ts` (updated store tests)
+- `apps/web/src/__tests__/formatters.test.ts` (formatter tests)
+- `apps/web/src/__tests__/api.test.ts` (API client tests)
+- `apps/web/src/__tests__/TransitExplorer.test.tsx` (component and feed isolation tests)
+- `apps/web/src/__tests__/Dashboard.test.tsx` (dashboard integration tests)
+- `README.md` (updated Stage 4 status and milestones)
+- `docs/architecture/overview.md` (documented Transit Explorer web frontend architecture)
+- `docs/development-ledger.md` (this ledger entry)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - Interactive map view (rendering stop markers, route shapes, and vehicle markers) is not yet active (Stage 4, Slice 4.2).
+  - Stop arrivals are currently refreshed via manual button or on initial load; automated polling or WebSocket push is not yet enabled.
+- **Next Authorized Step**:
+  - **Stage 4, Slice 4.2**: Interactive Map Component & Route Visualization.
+

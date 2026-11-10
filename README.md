@@ -158,7 +158,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 | Stage 1 | GTFS static data ingestion | ✅ Complete (Slices 1.1, 1.2 & 1.3) |
 | Stage 2 | GTFS-Realtime integration | ✅ Complete (Slice 2.1 Complete) |
 | Stage 3 | Historical Observation & ETA Prediction | ✅ Complete (Slices 3.1 & 3.2 Complete) |
-| Stage 4 | UI polish and deployment | ⬜ Not started |
+| Stage 4 | UI polish and deployment | 🟡 In Progress (Slice 4.1 Complete) |
 
 ### Completed Milestones
 - **Stage 0**: Full foundation with React/TS/Tailwind frontend, FastAPI backend, CI workflows, and documentation.
@@ -168,6 +168,12 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 - **Stage 2, Slice 2.1**: GTFS-Realtime Vehicle-Position Ingestion (`VehiclePositionIngestionService`), official MobilityData protobuf decoding (`gtfs_realtime_pb2.FeedMessage`), FeedHeader incrementality validation with explicit `DIFFERENTIAL` rejection, duplicate entity ID validation, coordinate bounds checking (`[-90, 90]`, `[-180, 180]`), `vehicle_positions` snapshot model with PostGIS GiST index, forward migration `0003_vehicle_positions`, atomic snapshot persistence, rollback preservation of previous snapshots, administrative CLI (`realtime-cli poll-vehicles`), and comprehensive test suite (86 total backend tests).
 - **Stage 3, Slice 3.1**: Historical Vehicle Observation Storage (`VehicleObservation` model, forward migration `0004_vehicle_observations`), composite idempotency constraint on `(feed_id, entity_id, observed_at)` with deterministic timestamp fallback (`vehicle_timestamp` → `feed_timestamp` → server receipt time), atomic transaction combining current snapshot replacement and duplicate-sample deduplication, internal query helper `get_recent_observations(...)` with mandatory `since` bound and result capping, PostGIS spatial GiST indexing, and 9 new deterministic integration tests (96 total backend tests).
 - **Stage 3, Slice 3.2**: Stop Arrival Predictions & ETA Engine (`ArrivalPredictionService`, endpoint `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`), GTFS calendar and calendar_dates active service evaluation, agency timezone resolution, extended-hour service times (>24:00) handling, downstream stop eligibility filtering based on vehicle `current_stop_sequence`, realtime telemetry freshness window enforcement (<= 300s), deterministic historical median delay calculation from `STOPPED_AT` observations at scheduled stops, transparent schedule fallback when history is absent, and 9 new comprehensive integration tests (105 total backend tests).
+- **Stage 4, Slice 4.1**: Feed-Aware Transit Explorer & Live Arrivals (`apps/web` React/TypeScript SPA with TanStack Query and Zustand):
+  - Enriched backend `GET /api/v1/feeds` returning bounded public UI metadata (`id`, `slug`, `city_name`, `feed_status`, `is_live_tracking_enabled`, `last_static_import_at`, `last_realtime_poll_at`) without exposing secrets, credentials, or private URLs.
+  - Configurable backend API base URL via `VITE_API_URL` environment convention with `.env.example`.
+  - Accessible, responsive UI components: `FeedSelector` with operational and live tracking badges, `StopSearch` with text filtering and wheelchair accessibility indicators, and `ArrivalsBoard` with scheduled/estimated arrival times, formatted delay badges (`+X min late`, `On time`, `X min early`), prediction source labels (`Live + History` vs `Schedule`), telemetry observation age, and agency timezone disclosure.
+  - Strict feed isolation: switching transit feeds immediately resets the active stop and arrivals view to prevent cross-feed data leakage.
+  - Comprehensive unit and integration test suite: 46 Vitest frontend tests across 5 files, and 105 backend Pytest tests.
 
 ## License
 

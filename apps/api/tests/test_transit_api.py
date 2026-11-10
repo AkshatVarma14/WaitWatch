@@ -163,6 +163,9 @@ async def test_list_feeds(api_client: AsyncClient) -> None:
     slugs = {f["slug"] for f in data["data"]}
     assert "metro-city" in slugs
     assert "empty-town" in slugs
+    assert all("id" in f and "city_name" in f and "slug" in f for f in data["data"])
+    # Public UI metadata only: no sensitive URLs or credentials
+    assert not any("static_gtfs_url" in f or "api_key" in f for f in data["data"])
 
 
 @pytest.mark.asyncio

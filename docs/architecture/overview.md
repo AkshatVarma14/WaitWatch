@@ -169,6 +169,24 @@ Provides real-time updates to connected clients:
 - ETA updates for subscribed stops
 - Service alerts and disruption notifications
 
+### 6. Transit Explorer Web Frontend — `Implemented (Slice 4.1)`
+
+User-facing React single-page application (`apps/web`):
+- **Client Architecture**:
+  - React 19 + TypeScript (strict mode, no `any`, functional components only, named exports).
+  - Tailwind CSS v4 for responsive, high-contrast dark theme.
+  - TanStack Query v5 for asynchronous server state fetching, caching, deduplication, and manual refetching.
+  - Zustand v5 client store managing active feed and stop selections with strict feed isolation.
+  - Configurable backend API URL through `VITE_API_URL` environment convention with `.env.example`.
+- **UI Components (`src/components/`)**:
+  - `FeedSelector`: Accessible `<select>` dropdown populated dynamically via `GET /api/v1/feeds`, displaying operational status and live tracking badges.
+  - `StopSearch`: Feed-scoped search (`GET /api/v1/feeds/{feed_slug}/stops?q=...`) with debounced text search, wheelchair accessibility indicator, and selection state.
+  - `ArrivalsBoard`: Stop-level live arrivals board calling `GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`. Displays scheduled vs estimated arrival times, passenger-facing delay pills (`+X min late`, `On time`, `X min early`), prediction source badges (`Live + History` vs `Schedule`), telemetry observation age, and agency timezone disclosure.
+- **Feed Isolation**:
+  - Switching transit feeds immediately clears the selected stop and arrivals state in the Zustand store, preventing cross-feed data leakage.
+- **Robust State Handling**:
+  - Explicit loading spinners, empty states ("No upcoming arrivals", "No stops found"), offline/error banners with retry buttons, and manual refresh controls.
+
 ## Data Flow
 
 ### 1. GTFS Static Data Ingestion
@@ -226,15 +244,18 @@ Vehicle Positions + Schedule Data + Historical Delays
 
 ## Current Status
 
-**Stage 0 (Project Foundation) and Stage 1, Slice 1.1 (Database Foundation & Transit Models) are implemented**:
+**Stages 0 through 3 are complete and verified; Stage 4, Slice 4.1 is implemented and verified**:
 
-- Repository structure and monorepo layout
-- Frontend scaffolding (React + Vite + TypeScript + Tailwind CSS + TanStack Query + Zustand)
-- Backend scaffolding (FastAPI + Pydantic + SQLAlchemy async + Alembic)
-- Database connection lifecycle with credential sanitization and real non-leaking health checks
-- 8 transit-domain SQLAlchemy models with multi-city support and PostGIS geospatial types
-- Initial Alembic migration (`0001_initial_transit_models`) with explicit PostGIS extension setup
-- Unit test suites for frontend (Vitest) and backend (Pytest, 18 tests)
-- CI/CD pipeline configuration with automated GitHub Actions
+- Full monorepo repository structure and CI/CD pipelines
+- Complete GTFS Static database schema, migrations 0001–0004, and ingestion pipeline
+- Transit Query REST API for feeds, routes, stops, and nearby geospatial queries
+- GTFS-Realtime vehicle position ingestion, snapshot storage, and deduplicated historical observations
+- Deterministic Stop Arrival Prediction & ETA Engine (`GET /api/v1/feeds/{feed_slug}/stops/{stop_id}/arrivals`)
+- Frontend Feed-Aware Transit Explorer & Live Arrivals Board (`apps/web` with React, TypeScript, TanStack Query, Zustand, and Tailwind)
+- Strict feed isolation across all frontend selections and API queries
+- 46 frontend tests (Vitest) and 105 backend tests (Pytest) passing cleanly in local and CI runs
 
-The GTFS static ingestion pipeline, real-time tracking, map UI, and ETA prediction are **planned for subsequent stages/slices**.
+Subsequent planned work:
+- Interactive map component with route shapes, stop markers, and live vehicle positions (Stage 4, Slice 4.2)
+- GTFS-Realtime TripUpdates ingestion
+- WebSocket live vehicle and ETA streaming

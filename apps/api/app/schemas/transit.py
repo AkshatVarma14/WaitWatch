@@ -37,6 +37,7 @@ class FeedSummaryResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    id: int = Field(..., description="Internal database feed identifier")
     city_name: str = Field(..., description="City or region name")
     slug: str = Field(..., description="URL-safe feed identifier")
     feed_status: str = Field(..., description="Operational status (e.g. active)")
@@ -45,6 +46,9 @@ class FeedSummaryResponse(BaseModel):
     )
     last_static_import_at: datetime | None = Field(
         None, description="Timestamp of last static schedule import"
+    )
+    last_realtime_poll_at: datetime | None = Field(
+        None, description="Timestamp of last real-time poll"
     )
 
 
@@ -60,9 +64,6 @@ class FeedDetailResponse(FeedSummaryResponse):
     )
     realtime_alerts_url: str | None = Field(
         None, description="GTFS-RT ServiceAlerts URL"
-    )
-    last_realtime_poll_at: datetime | None = Field(
-        None, description="Timestamp of last real-time poll"
     )
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")

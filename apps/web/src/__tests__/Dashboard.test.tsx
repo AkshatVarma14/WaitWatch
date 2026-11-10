@@ -1,29 +1,53 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Dashboard } from "../pages/Dashboard";
+
+function renderWithClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: 0,
+      },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
 
 describe("Dashboard", () => {
   it("renders the WaitWatch heading", () => {
-    render(<Dashboard />);
-    expect(screen.getByText("WaitWatch")).toBeDefined();
+    renderWithClient(<Dashboard />);
+    expect(screen.getByRole("heading", { name: "WaitWatch" })).toBeInTheDocument();
   });
 
   it("displays the purpose tagline", () => {
-    render(<Dashboard />);
-    expect(screen.getByText("Real-Time Transit Tracking")).toBeDefined();
-  });
-
-  it("shows initialization status", () => {
-    render(<Dashboard />);
+    renderWithClient(<Dashboard />);
     expect(
-      screen.getByText("Setting up the foundation"),
-    ).toBeDefined();
+      screen.getByRole("heading", { name: "Real-Time Transit Tracking" }),
+    ).toBeInTheDocument();
   });
 
-  it("lists planned features", () => {
-    render(<Dashboard />);
-    expect(screen.getByText("Route & stop explorer")).toBeDefined();
-    expect(screen.getByText("Live vehicle tracking")).toBeDefined();
-    expect(screen.getByText("ETA predictions")).toBeDefined();
+  it("renders the feed and stop navigation section", () => {
+    renderWithClient(<Dashboard />);
+    expect(
+      screen.getByRole("region", { name: /Feed and stop navigation/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the arrivals display section", () => {
+    renderWithClient(<Dashboard />);
+    expect(
+      screen.getByRole("region", { name: /Stop arrivals display/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the Stage 4 status badge", () => {
+    renderWithClient(<Dashboard />);
+    expect(
+      screen.getByText(/Stage 4: Transit Explorer/i),
+    ).toBeInTheDocument();
   });
 });
