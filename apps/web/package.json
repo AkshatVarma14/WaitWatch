@@ -1,0 +1,45 @@
+{
+  "name": "web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint src/",
+    "type-check": "tsc -b --noEmit",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview",
+    "postinstall": "node -e \"try { const fs=require('fs'); if(fs.existsSync('./node_modules/@rollup/wasm-node')) { fs.copyFileSync('./node_modules/@rollup/wasm-node/dist/native.js', './node_modules/rollup/dist/native.js'); fs.cpSync('./node_modules/@rollup/wasm-node/dist/wasm-node', './node_modules/rollup/dist/wasm-node', {recursive:true}); } } catch(e){}\""
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.66.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.2.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@rollup/wasm-node": "^4.68.2",
+    "@tailwindcss/vite": "^4.0.9",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.2.0",
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.20.1",
+    "jsdom": "^26.0.0",
+    "tailwindcss": "^4.0.9",
+    "typescript": "~5.7.3",
+    "typescript-eslint": "^8.24.1",
+    "vite": "^6.2.0",
+    "vitest": "^3.0.5"
+  },
+  "overrides": {
+    "rollup": "npm:@rollup/wasm-node@^4.68.2"
+  }
+}

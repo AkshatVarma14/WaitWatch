@@ -1,0 +1,1 @@
+"""WaitWatch API — Pydantic schemas."""

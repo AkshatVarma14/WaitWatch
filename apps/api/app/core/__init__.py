@@ -1,0 +1,1 @@
+"""WaitWatch API — Core configuration."""

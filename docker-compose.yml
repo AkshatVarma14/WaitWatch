@@ -1,0 +1,24 @@
+# WaitWatch — Local Development Infrastructure
+# Provides a PostGIS database for local development.
+# Usage: docker compose up -d
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: waitwatch-db
+    environment:
+      POSTGRES_USER: waitwatch
+      POSTGRES_PASSWORD: waitwatch
+      POSTGRES_DB: waitwatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - waitwatch-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waitwatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  waitwatch-pgdata:
