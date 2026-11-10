@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+node_modules
+apps/web/node_modules
+apps/web/dist
+apps/web/.vite
+apps/api/.venv
+apps/api/.pytest_cache
+apps/api/.ruff_cache
+apps/api/waitwatch_api.egg-info
+.env*
+*.log
+docs

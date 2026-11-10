@@ -751,4 +751,71 @@ Implemented the GTFS-Realtime TripUpdates ingestion pipeline, database persisten
 - **Limitations**:
   - Live TripUpdates and vehicle positions are ingested on-demand or via scheduled pollers; push-based WebSocket broadcasting to client frontends is scheduled for later roadmap polish.
 - **Next Authorized Step**:
-  - **Stage 4, Slice 4.5**: Docker Compose Production Scaffolding & End-to-End Application Polish (or WebSocket Live Push).
+  - **Stage 4, Slice 4.5**: Docker Compose Production Scaffolding & End-to-End Application Polish (Completed below).
+
+---
+
+### 2026-11-10 — Stage 4, Slice 4.5: Docker Compose Stack & Application Polish
+
+#### Overview
+Implemented the production-oriented Docker Compose stack (`docker-compose.yml`), container assets, and integration gap polish across the WaitWatch platform. Created pinned, secure container definitions for the PostgreSQL/PostGIS 16 database, FastAPI backend, and React/Nginx frontend. Designed an explicit, race-free database migration startup path (`migrate` service) that executes `alembic upgrade head` to completion before the API service begins accepting traffic, preventing concurrent migration conflicts during restarts or multi-replica scaling. Configured Docker healthchecks across all services using real native endpoints (`pg_isready`, Python standard library `GET /api/health`, and Nginx `/health`). Polished end-to-end integration gaps by normalizing `DATABASE_URL` schemes (`postgresql://` → `postgresql+asyncpg://`), expanding default API CORS origins for Compose web port 3000, normalizing API base URL trailing slashes and empty string relative paths for Nginx reverse-proxying, and providing a safe, placeholder-only `.env.example` template without usable default credentials.
+
+#### Key Deliverables & Design Decisions
+1. **Multi-Service Docker Compose Stack** (`docker-compose.yml`):
+   - **Database (`db`)**: Pinned `postgis/postgis:16-3.4` with persistent volume `waitwatch-pgdata` and `pg_isready` healthcheck.
+   - **Migration Runner (`migrate`)**: Dedicated one-shot service running `["alembic", "upgrade", "head"]` with `restart: "no"`. Depends on `db: { condition: service_healthy }`. Guarantees schema migrations apply exactly once before application startup, preserving restart behavior without running competing migration processes.
+   - **API Backend (`api`)**: Pinned `python:3.12-slim-bookworm` container image (`waitwatch-api:0.1.0`) running Uvicorn on port 8000. Depends on `migrate: { condition: service_completed_successfully }` and `db: { condition: service_healthy }`.
+   - **Web Frontend (`web`)**: Pinned `node:22-alpine3.20` + `nginx:1.27.2-alpine` multi-stage container (`waitwatch-web:0.1.0`) published on port 3000 (`${WEB_PORT:-3000}:80`). Depends on `api: { condition: service_healthy }`.
+2. **Hardened FastAPI Containerization** (`apps/api/Dockerfile`, `apps/api/.dockerignore`):
+   - Uses `python:3.12-slim-bookworm` with security updates and minimal packages.
+   - Created unprivileged runtime user and group `waitwatch` (UID/GID 1001).
+   - Zero-dependency healthcheck: executes `python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"` to verify server status and database connectivity without external curl/wget dependencies.
+3. **Optimized Nginx React SPA Containerization** (`apps/web/Dockerfile`, `apps/web/nginx.conf`, `apps/web/.dockerignore`):
+   - Multi-stage build with `node:22-alpine3.20` builder running `npm ci` and `npm run build`, followed by lightweight `nginx:1.27.2-alpine` runtime.
+   - Nginx configured with gzip compression, long-term immutable caching for `/assets/`, SPA client-side fallback (`try_files $uri $uri/ /index.html`), dedicated unlogged healthcheck (`/health`), and internal reverse proxying for `/api/` traffic to `http://api:8000/api/`.
+4. **Integration Gap Polish & Browser Networking**:
+   - **Database URL Normalization** (`apps/api/app/core/config.py`): Pydantic `@field_validator("database_url", mode="before")` automatically converts `postgresql://` to `postgresql+asyncpg://`, supporting standard external connection strings without runtime driver errors.
+   - **CORS Configuration** (`apps/api/app/core/config.py`): Extended default `cors_origins` to include `http://localhost:3000` and `http://127.0.0.1:3000` so browser traffic accessing the Compose web frontend can call the API without CORS rejections. Filtered empty entries in `cors_origin_list`.
+   - **API Client Base URL Normalization** (`apps/web/src/lib/api.ts`): Stripped trailing slashes and preserved empty string `""` so reverse-proxied relative calls cleanly route to `/api/...`.
+   - **Browser Networking Documentation**: Explicitly documented why browser code must not target Docker-internal DNS (`http://api:8000`) and provided correct host-accessible and proxied alternatives.
+5. **Secure Environment Configuration Template** (`.env.example`):
+   - Safe placeholders only (`replace_with_a_secure_password`, `your_delhi_transit_api_key_here`).
+   - No usable default credentials committed to version control.
+   - Clear explanations of required settings, Compose startup steps, and honest production disclaimers regarding secrets management, TLS termination, and managed databases.
+6. **Comprehensive Unit & Integration Test Suites**:
+   - Backend Pytest (138 tests total across 10 files): added 2 new tests in `test_database.py` verifying database URL normalization (`postgresql://` → `postgresql+asyncpg://`) and CORS origin string parsing/whitespace filtering.
+   - Frontend Vitest (83 tests total across 6 files): added test in `api.test.ts` verifying `API_BASE_URL` normalization and request path generation.
+   - Compose Structure Validation: verified with custom YAML parser assertions for service topology, image pinning, healthchecks, and dependency graph.
+
+#### Verification Evidence
+- **Backend Pytest**: 138 passed in 15.85s (`cd apps/api && py -3.12 -m pytest`).
+- **Backend Ruff**: Zero errors, 62 files formatted cleanly (`py -3.12 -m ruff check app tests alembic`, `py -3.12 -m ruff format --check app tests alembic`).
+- **Backend Compilation**: Clean compilation across all files (`py -3.12 -m compileall app tests alembic`).
+- **Frontend Vitest**: 83 passed across 6 test suites in 7.06s (`cd apps/web && npm.cmd test -- --run`).
+- **Frontend ESLint & Typecheck**: Clean with 0 warnings or errors (`npm.cmd run lint`, `npm.cmd run typecheck`).
+- **Frontend Production Build**: Built cleanly with Vite in 3.86s (`npm.cmd run build`).
+- **Docker Compose Configuration**: Syntax, image pinning, volume persistence, dependency conditions, and healthchecks verified via `scratch/validate_compose.py`.
+
+#### Changed / Added Files
+- `docker-compose.yml` (multi-service stack: `db`, `migrate`, `api`, `web`, and `waitwatch-pgdata` volume)
+- `.env.example` (secure environment template with placeholders and startup documentation)
+- `.dockerignore` (repository root Docker build ignore rules)
+- `apps/api/Dockerfile` (pinned Python 3.12 slim runtime with non-root user and healthcheck)
+- `apps/api/.dockerignore` (API Docker build ignore rules)
+- `apps/api/app/core/config.py` (database URL normalization and Compose CORS origins)
+- `apps/api/tests/test_database.py` (tests for URL normalization and CORS list parsing)
+- `apps/web/Dockerfile` (multi-stage Node build and Nginx runtime)
+- `apps/web/nginx.conf` (Nginx SPA configuration with API reverse proxy and healthcheck)
+- `apps/web/.dockerignore` (Web Docker build ignore rules)
+- `apps/web/src/lib/api.ts` (API base URL normalization and empty string handling)
+- `apps/web/src/__tests__/api.test.ts` (test for API base URL normalization)
+- `README.md` (updated Docker Compose full stack guide, milestones, and test counts)
+- `docs/architecture/overview.md` (documented container topology, lifecycle, and production scope)
+- `docs/development-ledger.md` (this ledger entry)
+
+#### Current Limitations & Next Roadmap Steps
+- **Limitations**:
+  - Live vehicle positions and stop arrivals update via 30-second client polling; push-based WebSocket streaming is scheduled for future real-time enhancement.
+  - Production secrets, SSL/TLS termination, and managed database hosting are external to this single-host Compose scaffold.
+- **Next Roadmap Step**:
+  - **Stage 5 / Future Enhancements**: WebSocket live vehicle and ETA streaming, turn-by-turn route planning, or multi-city production deployment.

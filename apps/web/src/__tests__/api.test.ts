@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  API_BASE_URL,
   fetchApi,
   fetchArrivals,
   fetchFeeds,
@@ -12,6 +13,20 @@ import {
 describe("api client", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("exports normalized API_BASE_URL and forms expected URL", async () => {
+    expect(API_BASE_URL).not.toMatch(/\/$/);
+    const mockJson = { ok: true };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(mockJson), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await fetchApi("/api/health");
+    expect(fetchSpy).toHaveBeenCalledWith(`${API_BASE_URL}/api/health`);
   });
 
   it("fetchApi returns parsed json on ok response", async () => {

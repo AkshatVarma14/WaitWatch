@@ -8,8 +8,11 @@ import type {
   StopSummary,
 } from "../types/transit";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const configuredApiUrl = import.meta.env.VITE_API_URL;
+export const API_BASE_URL =
+  typeof configuredApiUrl === "string"
+    ? configuredApiUrl.replace(/\/+$/, "")
+    : "http://localhost:8000";
 
 export async function fetchApi<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);

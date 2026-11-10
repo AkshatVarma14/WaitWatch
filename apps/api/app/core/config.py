@@ -2,6 +2,7 @@
 
 from urllib.parse import urlsplit, urlunsplit
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,14 +27,27 @@ class Settings(BaseSettings):
     # Server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = (
+        "http://localhost:5173,http://localhost:3000,http://localhost:80,"
+        "http://127.0.0.1:5173,http://127.0.0.1:3000"
+    )
 
     # Transit API keys
     delhi_transit_api_key: str = ""
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def assemble_database_url(cls, v: str | None) -> str:
+        """Ensure standard postgresql:// URLs are normalized to postgresql+asyncpg://."""
+        if isinstance(v, str) and v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v or ""
+
     @property
     def cors_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",")]
+        return [
+            origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
+        ]
 
     @property
     def sanitized_database_url(self) -> str:

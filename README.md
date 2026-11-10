@@ -86,15 +86,34 @@ cp .env.example .env
 
 Edit `.env` with your local configuration. See [Environment Configuration](#environment-configuration) below.
 
-### Database (Optional Docker Setup)
+### Docker Compose Full Stack (Recommended)
 
-If you don't have a local PostgreSQL/PostGIS installation:
+WaitWatch includes a complete Docker Compose scaffolding for running the database, migrations, API, and web frontend in isolated containers:
 
 ```bash
-docker compose up -d
+# 1. Copy configuration template and configure credentials
+cp .env.example .env
+
+# 2. Start the full application stack
+docker compose up -d --build
+
+# 3. Check service health and status
+docker compose ps
+
+# 4. View logs
+docker compose logs -f api
+
+# 5. Stop the stack
+docker compose down
 ```
 
-This starts a PostGIS-enabled PostgreSQL container with the configuration from your `.env` file.
+#### Service Architecture & Startup Order
+1. **`db`** (`postgis/postgis:16-3.4`): Starts PostgreSQL/PostGIS and verifies readiness via `pg_isready` health check. Data persists in named volume `waitwatch-pgdata`.
+2. **`migrate`** (`waitwatch-api:0.1.0`): One-shot container that waits for `db` to be healthy, executes `alembic upgrade head` to apply all database migrations safely, and exits cleanly. This prevents concurrent migration race conditions on restarts or scaling.
+3. **`api`** (`waitwatch-api:0.1.0`): Starts FastAPI on port 8000 only after `migrate` completes successfully (`condition: service_completed_successfully`) and `db` is healthy. Verified via native Python `GET /api/health` health check.
+4. **`web`** (`waitwatch-web:0.1.0`): Multi-stage build (`node:22-alpine` builder + `nginx:1.27.2-alpine` runtime) serving the React SPA on port 3000 (`http://localhost:3000`) and reverse-proxying `/api/` to the backend. Verified via Nginx `/health` check.
+
+> **Browser Networking Note**: Client-side JavaScript executes in the user's browser, not inside the Docker network. Use `http://localhost:8000` (or leave empty `""` to use Nginx reverse proxying). Never set `VITE_API_URL` to internal Docker hostnames like `http://api:8000`.
 
 ## Environment Configuration
 
@@ -158,7 +177,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
 | Stage 1 | GTFS static data ingestion | ✅ Complete (Slices 1.1, 1.2 & 1.3) |
 | Stage 2 | GTFS-Realtime integration | ✅ Complete (Slice 2.1 Complete) |
 | Stage 3 | Historical Observation & ETA Prediction | ✅ Complete (Slices 3.1 & 3.2 Complete) |
-| Stage 4 | UI polish and deployment | 🟡 In Progress (Slices 4.1, 4.2, 4.3 & 4.4 Complete) |
+| Stage 4 | UI polish and deployment | ✅ Complete (Slices 4.1, 4.2, 4.3, 4.4, & 4.5 Complete) |
 
 ### Completed Milestones
 - **Stage 0**: Full foundation with React/TS/Tailwind frontend, FastAPI backend, CI workflows, and documentation.
@@ -197,6 +216,14 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - Prediction service integration (`ArrivalPredictionService`): priority evaluation for `TRIP_UPDATE` prediction source, absolute event time precedence over delay (`time` > `delay`), departure fallback, trip cancellation (`CANCELED`) suppression, and skipped stop (`SKIPPED`) suppression, gracefully coexisting with vehicle positions and schedule fallbacks.
   - Frontend integration: `TRIP_UPDATE` prediction source formatting with prominent "Live TripUpdate" badge styling in `ArrivalsBoard`.
   - Comprehensive test suite: 82 Vitest frontend tests across 6 files, and 136 Pytest backend tests across 10 files.
+- **Stage 4, Slice 4.5**: Docker Compose Production Scaffolding & Application Polish:
+  - Multi-service Docker Compose topology (`db`, `migrate`, `api`, `web`) with pinned base images (`postgis/postgis:16-3.4`, `python:3.12-slim-bookworm`, `node:22-alpine3.20`, `nginx:1.27.2-alpine`).
+  - Safe, non-root API containerization with unprivileged `waitwatch` runtime user and zero-dependency Python standard library health check.
+  - Safe, isolated migration runner (`migrate` service) guaranteeing Alembic migrations execute once to completion before FastAPI serves requests, preventing competing migration processes on restart or scaling.
+  - High-performance Nginx SPA runtime with gzip compression, long-term static asset caching, SPA client-side fallback, dedicated container health check, and internal reverse proxy for `/api/` traffic.
+  - Integration gap polish: normalized `database_url` conversion from `postgresql://` to `postgresql+asyncpg://`, expanded CORS default origins to support Compose web port 3000, normalized API base URL trailing slashes and empty string relative paths, and documented browser networking constraints.
+  - Safe, placeholder-only `.env.example` template without usable default credentials, accompanied by clear startup and security guidance.
+  - Comprehensive test suite: 83 Vitest frontend tests across 6 files, and 138 Pytest backend tests across 10 files.
 
 ## License
 

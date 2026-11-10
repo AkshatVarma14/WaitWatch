@@ -242,12 +242,77 @@ Vehicle Positions + Schedule Data + Historical Delays
 | **SQLAlchemy + Alembic** | Mature ORM with GeoAlchemy2 for PostGIS column types and spatial queries. Alembic provides reliable database migration management tied to the SQLAlchemy model definitions. |
 | **Vite** | Fast development server with hot module replacement. Near-instant startup compared to Webpack. Native TypeScript and JSX support. |
 
+## Container Architecture & Deployment Scaffolding
+
+WaitWatch provides a reproducible Docker Compose architecture (`docker-compose.yml`) for local verification and single-host deployment scaffolding:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                          Docker Compose Stack                          │
+│                                                                        │
+│   ┌──────────────────┐               ┌─────────────────────────────┐   │
+│   │   waitwatch-web  │               │        waitwatch-api        │   │
+│   │  (Nginx 1.27.2)  │─── /api/ ────►│        (FastAPI 3.12)       │   │
+│   │    Port: 3000    │               │          Port: 8000         │   │
+│   └─────────▲────────┘               └──────────────┬──────────────┘   │
+│             │                                       │                  │
+│      GET /health (wget)                      GET /api/health (urllib)  │
+│             │                                       │                  │
+│             │       ┌───────────────────────┐       │                  │
+│             │       │   waitwatch-migrate   │       │                  │
+│             │       │   (Alembic upgrade)   │       │                  │
+│             │       │    (One-shot exit)    │       │                  │
+│             │       └───────────┬───────────┘       │                  │
+│             │                   │                   │                  │
+│             │                   ▼                   ▼                  │
+│             │       ┌──────────────────────────────────────────────┐   │
+│             └───────│                 waitwatch-db                 │   │
+│                     │           (PostgreSQL 16 + PostGIS 3.4)      │   │
+│                     │          Health: pg_isready | Port: 5432     │   │
+│                     │           Volume: waitwatch-pgdata           │   │
+│                     └──────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Service Topology & Startup Lifecycle
+1. **`db` (PostgreSQL 16 with PostGIS 3.4)**:
+   - Official pinned image `postgis/postgis:16-3.4`.
+   - Data persists across container lifecycles in named Docker volume `waitwatch-pgdata`.
+   - Healthcheck: `pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}` polled every 5 seconds.
+2. **`migrate` (Alembic Migration Runner)**:
+   - Reuses the `waitwatch-api:0.1.0` image with command `["alembic", "upgrade", "head"]`.
+   - Configured with `restart: "no"`.
+   - Depends on `db` with `condition: service_healthy`.
+   - **Deterministic, Race-Free Migrations**: By running in a dedicated one-shot container before `api` boots, migrations execute exactly once. Subsequent restarts or multiple replicas of `api` do not trigger concurrent, competing migration processes.
+3. **`api` (FastAPI Async Backend)**:
+   - Pinned base image `python:3.12-slim-bookworm` with unprivileged runtime user `waitwatch` (UID 1001).
+   - Starts only after `migrate` completes cleanly (`condition: service_completed_successfully`) and `db` is healthy.
+   - Native healthcheck: invokes `urllib.request.urlopen("http://127.0.0.1:8000/api/health")` using Python's standard library, verifying application and database connectivity without external shell dependencies.
+4. **`web` (React SPA + Nginx Reverse Proxy)**:
+   - Multi-stage build: compiled with pinned `node:22-alpine3.20` and served via pinned `nginx:1.27.2-alpine`.
+   - Nginx delivers gzip-compressed static assets with immutable cache headers and SPA client-side fallback (`try_files $uri $uri/ /index.html`).
+   - Built-in reverse proxy routes `/api/` traffic directly to `http://api:8000/api/` on the internal bridge network.
+   - Dedicated healthcheck at `/health` returning HTTP 200 without access log spam.
+
+### 2. Browser Networking vs. Internal Container Networking
+In client-side Single Page Applications (SPAs), JavaScript code runs exclusively in the user's web browser, not inside the Docker container bridge network.
+- **Direct API access**: When `VITE_API_URL` is set to `http://localhost:8000`, the browser connects directly to FastAPI on the host machine. CORS headers permit `http://localhost:3000` and `http://localhost:5173`.
+- **Proxied API access**: When `VITE_API_URL` is set to empty string `""`, the browser issues relative requests (e.g. `/api/v1/feeds`), which Nginx proxies internally to `http://api:8000/api/`.
+- **Invalid configuration**: Setting `VITE_API_URL=http://api:8000` causes browser-side DNS resolution failure (`ERR_NAME_NOT_RESOLVED`), because `api` is a Docker-internal hostname unresolvable by the host's operating system.
+
+### 3. Production Deployment Considerations & Remaining Scope
+While the Docker Compose stack provides a robust foundation for local development and single-host testing, full production readiness requires:
+- **Secrets Management**: Passing sensitive credentials via secure runtime secret stores (e.g. Vault, AWS Secrets Manager, Doppler) rather than plain-text `.env` files.
+- **TLS Termination**: Provisioning SSL/TLS certificates (e.g. via Let's Encrypt / Certbot, Cloudflare, or an external Ingress Controller) in front of port 80/443.
+- **Managed Database**: Replacing the local containerized PostgreSQL instance with a high-availability managed database (e.g. AWS RDS Aurora PostgreSQL with PostGIS, GCP Cloud SQL) for automated failover, replication, and point-in-time backups.
+- **Horizontal Scaling & Worker Schedulers**: Moving periodic GTFS static ingestion and GTFS-RT pollers into isolated worker processes managed by Celery, temporal, or Kubernetes CronJobs.
+
 ## Current Status
 
-**Stages 0 through 3 are complete and verified; Stage 4, Slices 4.1, 4.2, 4.3 & 4.4 are implemented and verified**:
+**Stages 0 through 4 are complete and verified across all roadmap slices (4.1 through 4.5)**:
 
-- Full monorepo repository structure and CI/CD pipelines
-- Complete GTFS Static database schema, migrations 0001–0006 (`0006_trip_updates` for GTFS-RT trip updates), and ingestion pipeline
+- Full monorepo repository structure, Docker Compose stack (`db`, `migrate`, `api`, `web`), and CI/CD pipelines
+- Complete GTFS Static database schema, migrations 0001–0006 (`0006_trip_updates`), and ingestion pipeline
 - Transit Query REST API for feeds, routes, stops, nearby geospatial queries, and route map visualization (`/api/v1/feeds/{feed_slug}/routes/{route_id}/map`)
 - GTFS-Realtime vehicle position ingestion, snapshot storage, and deduplicated historical observations
 - GTFS-Realtime TripUpdates ingestion (`TripUpdateIngestionService`, `parse_trip_updates`, `trip_updates` snapshot table), atomic snapshot replacement, and combined poll execution (`realtime-cli poll-vehicles`) fetching vehicle positions and configured TripUpdates in a single poll lifecycle with full error isolation and offline `--file` support
@@ -256,10 +321,11 @@ Vehicle Positions + Schedule Data + Historical Delays
 - Interactive route and vehicle map visualization (`MapView` with Leaflet) rendering true GTFS shape polylines, ordered stop markers, and bearing-rotated live vehicles with configurable tile provider and strict missing-shape warnings (no fabricated geometry)
 - Accessible route selector combobox (`RouteSelector`) and stop/vehicle navigator panel (`MapDetailsPanel`)
 - Real-time client polling architecture with 30-second interval, document visibility tracking (`useDocumentVisibility`, `usePollingVisibilityRefresh`), transient error handling preserving last successful data with "⚠️ Stale" status, and stable map viewports avoiding automated tile requests
+- Production-ready Docker Compose scaffolding (`docker-compose.yml`, `apps/api/Dockerfile`, `apps/web/Dockerfile`, `apps/web/nginx.conf`, `.env.example`) with pinned images, healthchecks, unprivileged users, automated Alembic migration runner, and reverse proxying
 - Strict feed and route isolation across all frontend selections and API queries
-- 82 frontend tests (Vitest across 6 files) and 136 backend tests (Pytest across 10 files) passing cleanly in local and CI runs
+- 83 frontend tests (Vitest across 6 files) and 138 backend tests (Pytest across 10 files) passing cleanly in local and CI runs
 
-Subsequent planned work:
-- GTFS-Realtime TripUpdates ingestion
+Subsequent planned roadmap work:
 - WebSocket live vehicle and ETA streaming
 - Turn-by-turn route navigation / trip planning
+- User preferences, favorite stops, and saved routes

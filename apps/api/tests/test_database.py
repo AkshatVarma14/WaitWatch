@@ -25,6 +25,31 @@ def test_sanitized_database_url_without_password() -> None:
     assert "sqlite:///:memory:" in s.sanitized_database_url
 
 
+def test_database_url_normalization() -> None:
+    """Ensure postgresql:// URLs are automatically converted to postgresql+asyncpg://."""
+    s = Settings(database_url="postgresql://user:pass@db:5432/waitwatch")
+    assert s.database_url == "postgresql+asyncpg://user:pass@db:5432/waitwatch"
+
+    s_async = Settings(database_url="postgresql+asyncpg://user:pass@db:5432/waitwatch")
+    assert s_async.database_url == "postgresql+asyncpg://user:pass@db:5432/waitwatch"
+
+
+def test_cors_origin_list_parsing() -> None:
+    """Ensure cors_origins string is cleanly split and stripped."""
+    s = Settings(
+        cors_origins="http://localhost:3000, http://localhost:5173 , , http://localhost:80"
+    )
+    assert s.cors_origin_list == [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:80",
+    ]
+    # Default settings should support port 3000 and 5173
+    default_s = Settings()
+    assert "http://localhost:3000" in default_s.cors_origin_list
+    assert "http://localhost:5173" in default_s.cors_origin_list
+
+
 @pytest.mark.asyncio
 async def test_check_database_connection_unavailable() -> None:
     """Verify that an unreachable database returns (False, 'unavailable') safely."""
