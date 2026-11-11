@@ -74,7 +74,7 @@ WaitWatch/
 
 ### Prerequisites
 
-- **Node.js** 20+
+- **Node.js** 22.12+
 - **Python** 3.11+
 - **PostgreSQL** 15+ with PostGIS extension
 - **Git**
@@ -138,6 +138,29 @@ The `.env.example` file contains all required environment variables. Copy it to 
 | **Frontend** | API base URL, WebSocket URL |
 
 > **Security:** Never commit your `.env` file. It is included in `.gitignore`.
+
+### Register and import a transit feed
+
+Feed registration is an operator-only CLI action; the public API does not expose feed-management endpoints. The command records source metadata and an optional **environment-variable name** for a provider key. It never accepts the key value, and live tracking stays disabled unless explicitly enabled.
+
+```powershell
+# Register metadata for a transit feed. Use a source you are authorized to access.
+docker compose exec api python -m app.services.gtfs.cli register `
+  --slug demo-city `
+  --city-name "Demo City" `
+  --static-url "https://agency.example/gtfs.zip" `
+  --api-key-env-var DELHI_TRANSIT_API_KEY
+
+# Copy a GTFS ZIP that you downloaded and are permitted to use into the API container.
+docker cp .\gtfs.zip waitwatch-api:/tmp/gtfs.zip
+
+# Validate and import the archive.
+docker compose exec api python -m app.services.gtfs.cli ingest `
+  --slug demo-city `
+  --file /tmp/gtfs.zip
+```
+
+For a protected feed, put the credential in `.env` using the same environment-variable name, never in a URL or command argument. The Compose configuration passes `DELHI_TRANSIT_API_KEY` to the API container; add an explicit environment mapping if another key name is required. Register authorized realtime URLs separately and add `--enable-live-tracking` only when the provider has granted realtime access. A successful import makes the feed and its routes/stops available to the explorer at `http://localhost:3000/`.
 
 ## Running the Frontend
 
@@ -251,7 +274,7 @@ The GitHub Actions pipeline runs both frontend and backend tests automatically o
   - GTFS-Realtime `TripUpdate` delay enrichment associating delay seconds and adjusted estimated times with both origin departure and destination arrival, with delay status badges (`REALTIME_DELAYED`, `REALTIME_EARLY`, `REALTIME_ON_TIME`, `SCHEDULED`).
   - Responsive, accessible React frontend component (`TripPlanner`) with stop selectors, swap button (`⇄`), departure time input, TanStack Query integration, itinerary cards with route color badges, duration, intermediate stop counts, and "View Route on Map" interaction.
   - Clean tab navigation on Dashboard (`🚏 Stop Explorer & Arrivals` vs `🧭 Direct Trip Planner`).
-  - Comprehensive test suite: 104 Vitest frontend tests across 8 files, and 169 Pytest backend tests across 12 files.
+  - Comprehensive test suite: 104 Vitest frontend tests across 8 files, and 172 Pytest backend tests across 12 files.
 
 ## License
 

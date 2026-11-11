@@ -3,13 +3,17 @@
 import argparse
 import asyncio
 import logging
+import re
 import sys
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.database.session import async_session_factory
 from app.models.feed import TransitFeed
+from app.services.gtfs.downloader import SENSITIVE_PARAM_NAMES
 from app.services.gtfs.service import GTFSIngestionService
 
 logging.basicConfig(
@@ -17,6 +21,102 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("gtfs-cli")
+
+
+def _is_safe_http_url(value: str) -> bool:
+    """Validate an HTTP URL without credentials embedded in the URL itself."""
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return False
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        return not any(
+            key.lower() in SENSITIVE_PARAM_NAMES
+            for key, _value in parse_qsl(parsed.query, keep_blank_values=True)
+        )
+    except ValueError:
+        return False
+
+
+async def run_register_feed(args: argparse.Namespace) -> int:
+    """Register one transit feed for later static or realtime ingestion."""
+    slug = args.slug.strip()
+    city_name = args.city_name.strip()
+    static_url = args.static_url.strip()
+    realtime_vehicle_url = args.vehicle_positions_url.strip() or None
+    realtime_trip_updates_url = args.trip_updates_url.strip() or None
+    realtime_alerts_url = args.alerts_url.strip() or None
+    api_key_env_var = args.api_key_env_var.strip() or None
+
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) or len(slug) > 64:
+        logger.error("Feed slug must be lowercase letters, numbers, and hyphens")
+        return 1
+    if not city_name or len(city_name) > 100:
+        logger.error("City name is required and must be at most 100 characters")
+        return 1
+    if len(static_url) > 2048 or not _is_safe_http_url(static_url):
+        logger.error("Static GTFS source must be a safe absolute HTTP(S) URL")
+        return 1
+
+    realtime_urls = (
+        realtime_vehicle_url,
+        realtime_trip_updates_url,
+        realtime_alerts_url,
+    )
+    if any(
+        url and (len(url) > 2048 or not _is_safe_http_url(url)) for url in realtime_urls
+    ):
+        logger.error("Realtime sources must be safe absolute HTTP(S) URLs")
+        return 1
+    if args.enable_live_tracking and not any(
+        (realtime_vehicle_url, realtime_trip_updates_url)
+    ):
+        logger.error("Live tracking requires a vehicle-positions or trip-updates URL")
+        return 1
+    if api_key_env_var and (
+        len(api_key_env_var) > 100
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env_var)
+    ):
+        logger.error("API key setting must be an environment-variable name")
+        return 1
+
+    async with async_session_factory() as session:
+        existing_stmt = select(TransitFeed.id).where(TransitFeed.slug == slug)
+        existing_id = (await session.execute(existing_stmt)).scalar_one_or_none()
+        if existing_id is not None:
+            logger.error("Feed slug is already registered; no changes were made")
+            return 1
+
+        feed = TransitFeed(
+            city_name=city_name,
+            slug=slug,
+            static_gtfs_url=static_url,
+            realtime_vehicle_positions_url=realtime_vehicle_url,
+            realtime_trip_updates_url=realtime_trip_updates_url,
+            realtime_alerts_url=realtime_alerts_url,
+            api_key_env_var=api_key_env_var,
+            is_live_tracking_enabled=args.enable_live_tracking,
+        )
+        session.add(feed)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            logger.error("Feed slug is already registered; no changes were made")
+            return 1
+        except Exception as exc:
+            await session.rollback()
+            logger.error("Feed registration failed (error_type=%s)", type(exc).__name__)
+            return 1
+
+        logger.info(
+            "Registered transit feed id=%d slug=%s live_tracking=%s",
+            feed.id,
+            feed.slug,
+            feed.is_live_tracking_enabled,
+        )
+        return 0
 
 
 async def run_ingest(args: argparse.Namespace) -> int:
@@ -79,9 +179,38 @@ def main() -> None:
     """CLI entrypoint."""
     parser = argparse.ArgumentParser(
         prog="gtfs-cli",
-        description="WaitWatch GTFS Static Ingestion CLI",
+        description="WaitWatch GTFS feed registration and static ingestion CLI",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    register_parser = subparsers.add_parser(
+        "register",
+        help="Register a feed without exposing feed-management over the public API",
+    )
+    register_parser.add_argument("--slug", required=True, help="Lowercase feed slug")
+    register_parser.add_argument("--city-name", required=True, help="Display city name")
+    register_parser.add_argument(
+        "--static-url", required=True, help="Authorized static GTFS source URL"
+    )
+    register_parser.add_argument(
+        "--vehicle-positions-url", default="", help="Optional GTFS-RT vehicle URL"
+    )
+    register_parser.add_argument(
+        "--trip-updates-url", default="", help="Optional GTFS-RT trip-updates URL"
+    )
+    register_parser.add_argument(
+        "--alerts-url", default="", help="Optional GTFS-RT alerts URL"
+    )
+    register_parser.add_argument(
+        "--api-key-env-var",
+        default="",
+        help="Name of the environment variable holding a provider key; never the key",
+    )
+    register_parser.add_argument(
+        "--enable-live-tracking",
+        action="store_true",
+        help="Enable live tracking when an authorized realtime source is configured",
+    )
 
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a static GTFS feed")
     ingest_parser.add_argument("--feed-id", type=int, help="Internal transit feed ID")
@@ -97,6 +226,9 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    if args.command == "register":
+        exit_code = asyncio.run(run_register_feed(args))
+        sys.exit(exit_code)
     if args.command == "ingest":
         exit_code = asyncio.run(run_ingest(args))
         sys.exit(exit_code)

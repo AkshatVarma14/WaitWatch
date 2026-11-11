@@ -91,7 +91,7 @@ Orchestrates downloading, inspecting, parsing, and persisting GTFS Schedule feed
 - **Resilient Downloader** (`downloader.py`): Streaming HTTP client enforcing timeouts and size bounds, masking credentials in logs and query parameters.
 - **GTFS Schedule Parser & Validator** (`parser.py`): CSV table parser strictly validating headers, row types, coordinate bounds, service-day times (including hours >= 24), single-agency feed omission of `agency_id`, multi-agency references, calendar and calendar-dates schedule validation, and relational integrity.
 - **Feed-Scoped Atomic Importer** (`importer.py`): Transactional persistence engine that clears prior data for the feed in reverse foreign key order, resolves parent-station hierarchies, inserts high-volume stop times in bounded batches, updates feed operational timestamps, and rolls back atomically on any failure.
-- **Administrative CLI** (`cli.py`): CLI interface (`python -m app.services.gtfs.cli ingest --feed-id <ID>`) for operators and background jobs without exposing unauthenticated public endpoints.
+- **Administrative CLI** (`cli.py`): Operator-only `register` and `ingest` commands (`python -m app.services.gtfs.cli register ...`, `python -m app.services.gtfs.cli ingest --feed-id <ID>`) without exposing unauthenticated public feed-management endpoints. Registration stores an API-key environment-variable reference only and leaves live tracking disabled by default.
 - **Forward Migration**: `0002_optional_agency_id` allowing `agency_id` to be nullable for standard single-agency feeds.
 
 ### 2. GTFS-Realtime Service — `Partial (Slice 2.1 Vehicle Positions Implemented)`

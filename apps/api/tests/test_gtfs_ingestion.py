@@ -4,6 +4,7 @@ Tests archive safety, downloader resilience, CSV parsing & GTFS schedule
 rules, and feed-scoped atomic database persistence.
 """
 
+import argparse
 import io
 import zipfile
 from datetime import date
@@ -691,6 +692,101 @@ async def test_service_rollback_on_persistence_error(
 # ---------------------------------------------------------------------------
 # 5. CLI Interface Tests
 # ---------------------------------------------------------------------------
+
+
+def _register_feed_args(**overrides: object) -> argparse.Namespace:
+    """Build valid feed-registration arguments with optional overrides."""
+    values = {
+        "slug": "demo-city",
+        "city_name": "Demo City",
+        "static_url": "https://data.example.com/demo/gtfs.zip",
+        "vehicle_positions_url": "",
+        "trip_updates_url": "",
+        "alerts_url": "",
+        "api_key_env_var": "DEMO_TRANSIT_API_KEY",
+        "enable_live_tracking": False,
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+@pytest.mark.asyncio
+async def test_cli_register_feed_stores_only_key_environment_reference(
+    async_test_session: AsyncSession,
+) -> None:
+    """Register a feed and keep live tracking disabled unless explicitly enabled."""
+    from app.services.gtfs.cli import run_register_feed
+
+    mock_factory = MagicMock()
+    mock_factory.return_value.__aenter__ = AsyncMock(return_value=async_test_session)
+    mock_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("app.services.gtfs.cli.async_session_factory", mock_factory):
+        code = await run_register_feed(_register_feed_args())
+
+    assert code == 0
+    feed = (
+        await async_test_session.execute(
+            select(TransitFeed).where(TransitFeed.slug == "demo-city")
+        )
+    ).scalar_one()
+    assert feed.city_name == "Demo City"
+    assert feed.api_key_env_var == "DEMO_TRANSIT_API_KEY"
+    assert feed.is_live_tracking_enabled is False
+    assert feed.feed_status == "active"
+
+
+@pytest.mark.asyncio
+async def test_cli_register_feed_duplicate_slug_makes_no_changes(
+    async_test_session: AsyncSession,
+) -> None:
+    """A repeated slug is rejected without overwriting its existing configuration."""
+    from app.services.gtfs.cli import run_register_feed
+
+    mock_factory = MagicMock()
+    mock_factory.return_value.__aenter__ = AsyncMock(return_value=async_test_session)
+    mock_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("app.services.gtfs.cli.async_session_factory", mock_factory):
+        assert await run_register_feed(_register_feed_args()) == 0
+        assert (
+            await run_register_feed(_register_feed_args(city_name="Changed City")) == 1
+        )
+
+    feeds = (
+        (
+            await async_test_session.execute(
+                select(TransitFeed).where(TransitFeed.slug == "demo-city")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(feeds) == 1
+    assert feeds[0].city_name == "Demo City"
+
+
+@pytest.mark.asyncio
+async def test_cli_register_feed_rejects_embedded_credentials_and_unconfigured_live(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Do not persist credentials embedded in URLs or enable empty realtime feeds."""
+    from app.services.gtfs.cli import run_register_feed
+
+    mock_factory = MagicMock()
+    with patch("app.services.gtfs.cli.async_session_factory", mock_factory):
+        code = await run_register_feed(
+            _register_feed_args(
+                static_url="https://data.example.com/gtfs.zip?api_key=never-log-me"
+            )
+        )
+        assert code == 1
+        assert (
+            await run_register_feed(_register_feed_args(enable_live_tracking=True)) == 1
+        )
+
+    assert "never-log-me" not in caplog.text
+    mock_factory.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -1215,3 +1215,23 @@ Conducted a comprehensive, code-level deployability and testability readiness au
 - No feed is registered in the local database. The approved Delhi Open Transit Data portal requires its dataset request/terms flow; no terms were accepted and no personal details or API credentials were submitted in this verification.
 - Import a feed only after its use is authorized and a valid GTFS archive or authorized static URL is available. Real-time vehicle data additionally requires provider authorization and a valid private key.
 - No production cloud hosting or native mobile work was added; both remain outside the approved MVP + readiness checkpoint.
+
+---
+
+### 2026-11-11 — Feed Registration and Final Readiness Follow-up
+
+#### Implemented
+- Added operator-only `gtfs-cli register` to create feed metadata without introducing a public unauthenticated feed-management API. It validates slugs and HTTP(S) sources, rejects embedded/query-string credentials, records only a provider-key environment-variable name, and leaves live tracking disabled by default.
+- Added registration tests for valid metadata, duplicate slugs, sensitive URL rejection, and live-tracking requirements. Updated the setup guide and architecture overview with the authorized feed import workflow.
+- Updated the frontend test runner to Vitest 5.1.0 and aligned frontend CI and the setup guide with Node 22.12+, which Vitest 5 requires. No application runtime dependencies changed.
+
+#### Verification
+- **Backend**: 172 Pytest tests passed; Ruff lint/format checks and Python compilation passed.
+- **Frontend**: 104 Vitest tests passed (8 files), ESLint passed, TypeScript check passed, and Vite production build passed.
+- **Dependency audit**: production dependency audit reports zero vulnerabilities. The full development dependency tree still reports 7 moderate findings under `typescript-eslint`/`minimatch`; the current published TypeScript ESLint release still resolves the affected `minimatch` range, and `npm audit fix` did not produce an update. The two critical Vitest findings are cleared.
+- **Build note**: frontend JavaScript bundle remains 504.89 kB minified (152.33 kB gzip), slightly over Vite's advisory threshold; build succeeds.
+- **Local stack**: rebuilt images start successfully; PostGIS, API, and web containers report healthy; migration exits 0; API health reports database connected; app health URL returns HTTP 200. Feed list remains empty until an authorized GTFS archive is imported.
+
+#### Remaining Data Setup
+- The approved Delhi OTD static dataset request/terms flow has not been completed and no private real-time key was supplied. The app is testable locally, but transit routes and arrivals require an authorized static archive; live updates require a provider-authorized realtime feed and key.
+- Production hosting and native mobile remain outside the approved MVP + readiness checkpoint.
