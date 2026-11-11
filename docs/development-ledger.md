@@ -1196,3 +1196,22 @@ Conducted a comprehensive, code-level deployability and testability readiness au
 #### Changed Files
 - `.github/workflows/backend.yml` (enforced ruff format and compileall in CI)
 - `docs/development-ledger.md` (this readiness checkpoint entry)
+
+---
+
+### 2026-11-11 — Local Docker and Application Smoke Verification
+
+#### Verified Results
+- **Compose configuration**: `docker compose config --quiet` passed without printing resolved environment values.
+- **Container state**: `db`, `api`, and `web` are healthy; the one-shot `migrate` service exited with code 0.
+- **API health**: `GET /api/health` returned `status: healthy` and `database: connected` through the web reverse proxy.
+- **Frontend availability**: `http://localhost:3000/` loaded the Stage 4 transit explorer. `GET /api/v1/feeds` returned an empty list, so route, stop, arrival, map, and planner views have no transit data to display yet.
+- **Frontend verification**: Vitest passed all 104 tests across 8 files; ESLint and TypeScript type-check passed; the production Vite build passed. Vite reported the existing JavaScript bundle is slightly above its 500 kB advisory threshold (504.89 kB minified, 152.33 kB gzip).
+- **Backend static checks**: Ruff check and format check passed; Python compilation passed.
+- **Backend Pytest**: 169 passed in 12.24s using a project-local Python 3.14.5 virtual environment. The base host environment was missing `gtfs-realtime-bindings` and `aiosqlite`; both were installed only into the ignored `.venv`. One existing `PytestRemovedIn10Warning` was emitted by the installed AnyIO pytest plugin.
+- **Docker CLI**: Docker Desktop's CLI and Compose plugin are installed. This shell's inherited PATH was stale, while the current user PATH already includes the Docker Desktop `resources\bin` folder; the bundled CLI reported Docker 29.9.3 and Compose v5.7.0. Open a new PowerShell window for normal `docker` command resolution.
+
+#### Remaining Data Setup
+- No feed is registered in the local database. The approved Delhi Open Transit Data portal requires its dataset request/terms flow; no terms were accepted and no personal details or API credentials were submitted in this verification.
+- Import a feed only after its use is authorized and a valid GTFS archive or authorized static URL is available. Real-time vehicle data additionally requires provider authorization and a valid private key.
+- No production cloud hosting or native mobile work was added; both remain outside the approved MVP + readiness checkpoint.

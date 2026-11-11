@@ -123,7 +123,7 @@ docker compose down
 
 > **Browser Networking Note**: Client-side JavaScript executes in the user's browser, not inside the Docker network. Use `http://localhost:8000` (or leave empty `""` to use Nginx reverse proxying). Never set `VITE_API_URL` to internal Docker hostnames like `http://api:8000`.
 
-> **Verification Note**: Docker is not installed on this local Windows development host; Compose verification is performed via static configuration and dependency analysis rather than live `docker compose up` execution.
+> **Runtime verification**: The local Docker Compose stack was smoke-tested on 2026-11-11. The database, API, and web services reported healthy, the migration service exited successfully, and `/api/health` reported a connected database. The transit feed list is currently empty; add a licensed GTFS feed before expecting routes, stops, arrivals, or vehicles to appear.
 
 ## Environment Configuration
 
