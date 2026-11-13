@@ -30,7 +30,7 @@ class TransitFeed(Base):
     slug: Mapped[str] = mapped_column(
         String(64), unique=True, nullable=False, index=True
     )
-    static_gtfs_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    static_gtfs_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     realtime_vehicle_positions_url: Mapped[str | None] = mapped_column(
         String(2048), nullable=True
     )
@@ -42,6 +42,7 @@ class TransitFeed(Base):
     # Reference to the environment variable holding the transit API key
     # (never store the raw key)
     api_key_env_var: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    api_key_query_param: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Operational status: active, inactive, error, maintenance
     feed_status: Mapped[str] = mapped_column(

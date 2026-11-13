@@ -77,6 +77,13 @@ export function RouteSelector() {
         ))}
       </select>
 
+      {!isLoading && !isError && routes.length === 0 && (
+        <p role="status" className="text-xs text-amber-300">
+          Static routes are not imported yet. Live vehicle positions remain
+          available on the map.
+        </p>
+      )}
+
       {activeRoute && (
         <div className="pt-2 border-t border-gray-800 flex items-center gap-2 text-xs">
           <span

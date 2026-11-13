@@ -86,6 +86,7 @@ class VehiclePositionIngestionService:
             raw_bytes = await download_realtime_feed(
                 feed.realtime_vehicle_positions_url,
                 api_key=api_key,
+                api_key_query_param=feed.api_key_query_param,
             )
 
         # 2. Parse and validate protobuf message

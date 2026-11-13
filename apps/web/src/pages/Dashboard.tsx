@@ -171,12 +171,30 @@ export function Dashboard() {
 
       {/* Footer */}
       <footer className="border-t border-gray-800 px-6 py-4 bg-gray-950 mt-auto">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-500">
+        <div className="max-w-7xl mx-auto flex flex-col items-center gap-2 text-xs text-gray-500 text-center">
           <p>
             WaitWatch v0.4.2 — Interactive Map & Route Visualization
           </p>
           <p>
-            GTFS Static Shapes & GTFS-Realtime Telemetry Integration
+            Bus schedule data: {" "}
+            <a
+              href="https://delhi.transportstack.in/data-services"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-gray-300"
+            >
+              Delhi Transport Stack (DTC / DoT)
+            </a>
+            {" · "}
+            Live positions: {" "}
+            <a
+              href="https://otd.delhi.gov.in/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-gray-300"
+            >
+              Open Transit Data Delhi
+            </a>
           </p>
         </div>
       </footer>

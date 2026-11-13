@@ -86,6 +86,7 @@ class TripUpdateIngestionService:
                 raw_bytes = await download_realtime_feed(
                     feed.realtime_trip_updates_url,
                     api_key=api_key,
+                    api_key_query_param=feed.api_key_query_param,
                 )
             except RealtimeDownloadError:
                 raise

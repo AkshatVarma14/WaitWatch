@@ -3,6 +3,7 @@ import type {
   ItemEnvelope,
   PaginatedResponse,
   RouteMapData,
+  RouteMapVehicle,
   RouteSummary,
   StopArrivalPrediction,
   StopSummary,
@@ -118,6 +119,15 @@ export async function fetchRouteMap(
 ): Promise<RouteMapData> {
   const envelope = await fetchApi<ItemEnvelope<RouteMapData>>(
     `/api/v1/feeds/${encodeURIComponent(feedSlug)}/routes/${encodeURIComponent(routeId)}/map`,
+  );
+  return envelope.data;
+}
+
+export async function fetchFeedVehicles(
+  feedSlug: string,
+): Promise<RouteMapVehicle[]> {
+  const envelope = await fetchApi<ItemEnvelope<RouteMapVehicle[]>>(
+    `/api/v1/feeds/${encodeURIComponent(feedSlug)}/vehicles`,
   );
   return envelope.data;
 }

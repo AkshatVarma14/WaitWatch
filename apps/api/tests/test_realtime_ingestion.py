@@ -446,6 +446,38 @@ async def test_downloader_masks_credentials_and_respects_size() -> None:
 
 
 @pytest.mark.asyncio
+async def test_downloader_adds_api_key_as_configured_query_parameter(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Support providers that require API keys in a named query parameter."""
+    test_bytes = create_sample_feed_message()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"Content-Length": str(len(test_bytes))}
+
+    async def mock_aiter(chunk_size: int = 65536):
+        yield test_bytes
+
+    mock_resp.aiter_bytes = mock_aiter
+    mock_stream = MagicMock()
+    mock_stream.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_stream.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient.stream", return_value=mock_stream) as mock_stream_fn:
+        data = await download_realtime_feed(
+            "https://transit.example.com/VehiclePositions.pb",
+            api_key="never-log-this-key",
+            api_key_query_param="key",
+        )
+
+    assert data == test_bytes
+    request_url = mock_stream_fn.call_args.args[1]
+    assert "key=never-log-this-key" in request_url
+    assert "Authorization" not in mock_stream_fn.call_args.kwargs["headers"]
+    assert "never-log-this-key" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_downloader_size_exceeded_raises() -> None:
     """Verify downloading payload exceeding max_bytes raises RealtimeDownloadError."""
     mock_resp = MagicMock()

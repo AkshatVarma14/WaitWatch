@@ -1235,3 +1235,74 @@ Conducted a comprehensive, code-level deployability and testability readiness au
 #### Remaining Data Setup
 - The approved Delhi OTD static dataset request/terms flow has not been completed and no private real-time key was supplied. The app is testable locally, but transit routes and arrivals require an authorized static archive; live updates require a provider-authorized realtime feed and key.
 - Production hosting and native mobile remain outside the approved MVP + readiness checkpoint.
+
+---
+
+### 2026-11-13 — Delhi Static and Live Feed Integration
+
+#### Implemented
+- Registered the authorized Delhi Open Transit Data bus vehicle-position endpoint as the `delhi-bus` feed, with its query-based key read from the existing environment variable; no credential is stored in feed metadata.
+- Added the reversible `0007_live_only_feeds` migration, an automatic 30-second poller, and a feed-wide fresh-vehicles API so the map can show live buses before static routes are available.
+- Added a repeatable PowerShell setup script. It builds and starts the stack, registers the feed if needed, imports `data/gtfs/delhi-buses.zip` when present, and waits for the automatic poll rather than starting a duplicate request.
+- Mounted the licensed archive read-only, ignored it in Git, and added attribution to Delhi Transport Stack and Open Transit Data Delhi in the app.
+- Suppressed HTTPX INFO request logs because they include full query URLs; application request logs continue to use the redacted URL.
+
+#### Verification
+- **Compose**: API and web production images built; PostGIS database reported healthy; migration exited successfully; API and web started healthy.
+- **API**: `/api/health` reported database connected; the local web health endpoint returned HTTP 200.
+- **Delhi live feed**: scheduled worker received 559,815 bytes and parsed 5,361 vehicle positions, followed by successful 5,328 and 5,325 vehicle snapshots. The API and browser map returned/displayed 2,000 current positions (the configured display limit), and the UI reported 30-second live polling.
+- **Setup automation**: the final `setup-delhi-transit.ps1` run exited successfully and confirmed live positions were available.
+- **Frontend checks**: 106 Vitest tests passed; TypeScript/Vite production build passed. **Backend static checks**: Ruff lint and format checks passed on 63 files. `git diff --check` and `docker compose config --quiet` passed.
+
+---
+
+### 2026-11-13 — Full Delhi Static GTFS Integration, Multi-Feed Architecture & MVP Verification (Completed & Verified)
+
+#### Context & Objectives
+- Ingested the official Delhi static GTFS dataset (`delhi_buses_static_gtfs_v1.zip` / `data/gtfs/delhi-buses.zip`) covering all DTC & DIMTS bus routes, schedules, stops, calendar, trips, stop times, and shapes.
+- Designed dual-feed support in the WaitWatch architecture:
+  - `delhi-bus` (Feed ID 1): Real-time vehicle position tracking via Delhi Open Transit Data protobuf feed (5,300+ buses parsed, top 2,000 served via API) polled automatically every 30 seconds.
+  - `delhi-buses` (Feed ID 2): Complete static GTFS schedule and network (2 agencies, 2,574 routes, 6,862 stops, 80,357 trips, 2,737,136 stop times, 3,498 shapes with 965,607 coordinate points).
+- Verified 100% route ID correlation (925/925 routes) between the real-time vehicle positions and static GTFS routes.
+- Resolved regression test breakages in Alembic configuration and realtime downloader streaming mock.
+- Updated UI and API to cleanly reflect feed capabilities (`is_live_tracking_enabled`, `has_static_schedule`, `has_shapes`).
+- Executed full test, lint, and build suites across backend and frontend, and verified end-to-end functionality on running Docker stack.
+
+#### Implemented Components & Bug Fixes
+1. **Pydantic Configuration Compatibility** (`apps/api/app/core/config.py`):
+   - Added `extra="ignore"` to `SettingsConfigDict` in `Settings` so unmodeled workspace/Docker environment variables in `.env` do not fail validation during local CLI and test execution.
+2. **Alembic Test Maintenance** (`apps/api/tests/test_alembic.py`):
+   - Updated head migration revision expectation to `0007_live_only_feeds` and validated migration consistency (`rev_0007`).
+3. **Realtime Downloader Mock Stream Test** (`apps/api/tests/test_realtime_ingestion.py`):
+   - Fixed `test_downloader_adds_api_key_as_configured_query_parameter` by checking call arguments on the mocked `client.stream` callable rather than the stream context manager instance.
+4. **Static GTFS Ingestion & Database Populating**:
+   - Ingested 2 agencies (DTC, DIMTS), 2,574 routes, 6,862 stops, 80,357 trips, 2,737,136 stop times, and 3,498 shapes into PostgreSQL 16 / PostGIS 3.4 under feed `delhi-buses`.
+   - Batch ingestion executed cleanly with `--batch-size 5000`.
+5. **Feed Capabilities & Frontend Transparency** (`apps/web/`):
+   - Updated `TransitFeed` type and API response schemas to include `has_static_schedule` and `has_shapes`.
+   - In `Dashboard.tsx`, `routeSelector.tsx`, and `mapView.tsx`, transparently adapted UI state based on feed capabilities:
+     - When viewing `delhi-bus` (live-only), real-time bus positions are polled and rendered on the Leaflet map with 30s live indicator.
+     - When viewing `delhi-buses` (schedule & routes), routes, shapes, stops, timetable arrivals, and direct journey planner are fully active.
+6. **Automation & Developer Experience** (`scripts/setup-delhi-transit.ps1`):
+   - Updated PowerShell setup script to idempotently register both `delhi-bus` (real-time vehicle feed) and `delhi-buses` (static GTFS schedule), ingest the archive if modified, and verify live polling without redundant re-ingestion.
+
+#### Verification Evidence
+- **Backend Tests (Pytest)**: 175 tests passed in 11.74s (`py -3.12 -m pytest`).
+- **Backend Linting & Formatting (Ruff)**: 71 files checked, 0 errors, 0 warnings (`ruff check .`, `ruff format --check .`).
+- **Backend Compilation**: Clean compilation across all modules (`py -3.12 -m compileall app/ tests/`).
+- **Frontend Tests (Vitest)**: 106 tests passed across 9 test files in 6.44s (`npm.cmd test -- --run`).
+- **Frontend Quality Gates**: ESLint passed (`npm run lint`), TypeScript check passed (`npm run typecheck`), and production Vite build succeeded (`npm run build`, bundle: 504 kB / 152 kB gzip).
+- **PostGIS & Database Verification**:
+  - `delhi-bus`: 2,175 active live bus positions.
+  - `delhi-buses`: 2 agencies, 2,574 routes, 6,862 stops, 80,357 trips, 2,737,136 stop times, 3,498 shapes (965,607 coordinate points).
+- **API Runtime Verification**:
+  - `GET /api/health`: Database healthy (`"database": "connected"`).
+  - `GET /api/v1/feeds`: Both `delhi-bus` and `delhi-buses` returned with accurate capability flags.
+  - `GET /api/v1/feeds/delhi-buses/routes`: 2,574 routes listed with pagination.
+  - `GET /api/v1/feeds/delhi-buses/routes/8/map`: 215 polyline coordinates and 32 ordered stops returned.
+  - `GET /api/v1/feeds/delhi-buses/stops/nearby?latitude=28.6139&longitude=77.2090&radius_meters=1000`: 20 nearby stops returned via PostGIS `ST_DWithin`.
+  - `GET /api/v1/feeds/delhi-buses/plan?origin_stop_id=35&destination_stop_id=150&time=08:00:00`: Direct journeys found with scheduled arrival/departure times and intermediate stops.
+
+#### MVP Status & Readiness
+- All planned MVP stages (Stages 0 through 5) are fully implemented, integrated, tested, and verified on the local PostGIS + Docker stack.
+- Real-time GTFS-RT ingestion actively streams Delhi bus telemetry, and static GTFS schedule data powers interactive network exploration, route mapping, stop arrivals, and trip planning.

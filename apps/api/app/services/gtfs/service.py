@@ -107,6 +107,12 @@ class GTFSIngestionService:
         if not feed:
             raise GTFSPersistenceError(f"Transit feed with ID {feed_id} does not exist")
 
+        if not feed.static_gtfs_url:
+            raise GTFSDownloadError(
+                f"Feed '{feed.slug}' has no static GTFS URL; "
+                "import a local archive instead"
+            )
+
         api_key: str | None = None
         if feed.api_key_env_var:
             api_key = os.getenv(feed.api_key_env_var)

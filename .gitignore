@@ -48,3 +48,6 @@ apps/api/alembic/versions/*.pyc
 
 # Docker
 docker-compose.override.yml
+
+# Licensed transit feed archives are downloaded separately and must stay out of Git.
+/data/gtfs/

@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { fetchRouteMap } from "../lib/api";
+import { fetchFeedVehicles, fetchRouteMap } from "../lib/api";
 import { formatLastUpdated, formatObservationAge } from "../lib/formatters";
 import {
   getPollingIntervalMs,
@@ -33,6 +33,7 @@ export function MapView() {
   const tileUrl = import.meta.env.VITE_MAP_TILE_URL || DEFAULT_TILE_URL;
   const pollingInterval = getPollingIntervalMs();
   const isPollingEnabled = Boolean(selectedFeedSlug && selectedRouteId);
+  const isFeedOverviewEnabled = Boolean(selectedFeedSlug && !selectedRouteId);
   const isVisible = useDocumentVisibility();
 
   const {
@@ -58,11 +59,44 @@ export function MapView() {
     refetchOnWindowFocus: true,
   });
 
-  const hasError = isError || Boolean(error);
+  const feedVehiclesQuery = useQuery({
+    queryKey: ["feedVehicles", selectedFeedSlug],
+    queryFn: () => fetchFeedVehicles(selectedFeedSlug!),
+    enabled: isFeedOverviewEnabled,
+    refetchInterval: () =>
+      isFeedOverviewEnabled && isVisible ? pollingInterval : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
 
-  usePollingVisibilityRefresh(isPollingEnabled, () => {
-    void refetch();
-  }, isVisible);
+  const displayedVehicles = routeMapData?.vehicles ?? feedVehiclesQuery.data ?? [];
+  const activeDataUpdatedAt = selectedRouteId
+    ? dataUpdatedAt
+    : feedVehiclesQuery.dataUpdatedAt;
+  const activeIsLoading = selectedRouteId
+    ? isLoading
+    : feedVehiclesQuery.isLoading;
+  const activeIsFetching = selectedRouteId
+    ? isFetching
+    : feedVehiclesQuery.isFetching;
+  const activeError = selectedRouteId ? error : feedVehiclesQuery.error;
+  const activeHasData = selectedRouteId
+    ? routeMapData !== undefined
+    : feedVehiclesQuery.data !== undefined;
+  const hasError = selectedRouteId
+    ? isError || Boolean(error)
+    : feedVehiclesQuery.isError || Boolean(feedVehiclesQuery.error);
+  const refreshActiveMap = selectedRouteId
+    ? refetch
+    : feedVehiclesQuery.refetch;
+
+  usePollingVisibilityRefresh(
+    isPollingEnabled || isFeedOverviewEnabled,
+    () => {
+      void refreshActiveMap();
+    },
+    isVisible,
+  );
 
   // 1. Initialize Leaflet map instance once
   useEffect(() => {
@@ -110,14 +144,14 @@ export function MapView() {
 
     layerGroup.clearLayers();
 
-    if (!routeMapData) {
+    if (!routeMapData && !feedVehiclesQuery.data) {
       return;
     }
 
     const boundsPoints: L.LatLngTuple[] = [];
 
     // 2a. Render true GTFS shape polylines (never fabricated from stops)
-    if (routeMapData.shapes && routeMapData.shapes.length > 0) {
+    if (routeMapData?.shapes && routeMapData.shapes.length > 0) {
       for (const shape of routeMapData.shapes) {
         const polylinePoints: L.LatLngTuple[] = shape.points.map((p) => [
           p.latitude,
@@ -136,7 +170,7 @@ export function MapView() {
     }
 
     // 2b. Render route stops
-    if (routeMapData.stops) {
+    if (routeMapData?.stops) {
       for (const stop of routeMapData.stops) {
         boundsPoints.push([stop.latitude, stop.longitude]);
         const isSelected = selectedStop?.stop_id === stop.stop_id;
@@ -175,8 +209,8 @@ export function MapView() {
     }
 
     // 2c. Render fresh vehicle markers with bearing rotation
-    if (routeMapData.vehicles) {
-      for (const veh of routeMapData.vehicles) {
+    if (displayedVehicles) {
+      for (const veh of displayedVehicles) {
         boundsPoints.push([veh.latitude, veh.longitude]);
         const isSelected = selectedVehicleId === veh.entity_id;
         const bearing = veh.bearing ?? 0;
@@ -204,7 +238,7 @@ export function MapView() {
         const marker = L.marker([veh.latitude, veh.longitude], { icon });
 
         marker.bindTooltip(
-          `<div><strong>Vehicle ${veh.vehicle_label || veh.vehicle_id || veh.entity_id}</strong><br/>Speed: ${
+          `<div><strong>Vehicle ${veh.vehicle_label || veh.vehicle_id || veh.entity_id}</strong>${veh.route_id ? `<br/>Route: ${veh.route_id}` : ""}<br/>Speed: ${
             veh.speed ? `${Math.round(veh.speed * 3.6)} km/h` : "N/A"
           }<br/><span style="font-size:11px;color:#94a3b8">Heading: ${Math.round(bearing)}° • ${obsAge}</span></div>`,
           { direction: "top", offset: [0, -14] },
@@ -220,19 +254,22 @@ export function MapView() {
 
     // 2d. Fit bounds to all route elements on initial load or route change
     // Avoid re-fitting on background polling ticks to preserve user zoom/pan and tile stability
-    if (
-      boundsPoints.length > 0 &&
-      lastFittedRouteRef.current !== selectedRouteId
-    ) {
-      lastFittedRouteRef.current = selectedRouteId;
+    const fitKey = selectedRouteId
+      ? `${selectedFeedSlug}:${selectedRouteId}`
+      : `feed:${selectedFeedSlug}`;
+    if (boundsPoints.length > 0 && lastFittedRouteRef.current !== fitKey) {
+      lastFittedRouteRef.current = fitKey;
       const bounds = L.latLngBounds(boundsPoints);
       map.fitBounds(bounds, {
         padding: [30, 30],
-        maxZoom: 15,
+        maxZoom: selectedRouteId ? 15 : 12,
       });
     }
   }, [
     routeMapData,
+    feedVehiclesQuery.data,
+    displayedVehicles,
+    selectedFeedSlug,
     selectedRouteId,
     selectedStop?.stop_id,
     selectedVehicleId,
@@ -261,12 +298,15 @@ export function MapView() {
               • Route {routeMapData.route_short_name || routeMapData.route_id}
             </span>
           )}
+          {isFeedOverviewEnabled && (
+            <span className="text-gray-400">• Live vehicles across feed</span>
+          )}
         </div>
 
         {/* Status Indicators & Controls */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Polling / Live Status */}
-          {isPollingEnabled && (
+          {(isPollingEnabled || isFeedOverviewEnabled) && (
             <div className="flex items-center gap-1.5 text-xs">
               {!isVisible ? (
                 <span
@@ -276,7 +316,7 @@ export function MapView() {
                 >
                   ⏸ Paused
                 </span>
-              ) : hasError && routeMapData ? (
+              ) : hasError && activeHasData ? (
                 <span
                   role="status"
                   className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800"
@@ -304,9 +344,9 @@ export function MapView() {
                 </span>
               )}
 
-              {dataUpdatedAt > 0 && (
+              {activeDataUpdatedAt > 0 && (
                 <span className="text-[11px] text-gray-500 hidden sm:inline">
-                  Updated {formatLastUpdated(dataUpdatedAt)}
+                  Updated {formatLastUpdated(activeDataUpdatedAt)}
                 </span>
               )}
             </div>
@@ -331,27 +371,28 @@ export function MapView() {
                 </span>
               )}
 
-              {routeMapData.vehicles.length > 0 && (
-                <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-950/70 text-blue-300 border border-blue-800">
-                  🚌 {routeMapData.vehicles.length} Live{" "}
-                  {routeMapData.vehicles.length === 1 ? "Vehicle" : "Vehicles"}
-                </span>
-              )}
             </>
           )}
 
+          {displayedVehicles.length > 0 && (
+            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-950/70 text-blue-300 border border-blue-800">
+              🚌 {displayedVehicles.length} Live{" "}
+              {displayedVehicles.length === 1 ? "Vehicle" : "Vehicles"}
+            </span>
+          )}
+
           {/* Manual Refresh Button */}
-          {selectedRouteId && (
+          {(selectedRouteId || isFeedOverviewEnabled) && (
             <button
               type="button"
-              onClick={() => void refetch()}
-              disabled={isFetching}
-              aria-label="Refresh route map"
+              onClick={() => void refreshActiveMap()}
+              disabled={activeIsFetching}
+              aria-label="Refresh live map"
               className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-[11px] text-gray-200 rounded border border-gray-700 transition-colors cursor-pointer"
             >
-              <span className={isFetching ? "animate-spin" : ""}>🔄</span>
+              <span className={activeIsFetching ? "animate-spin" : ""}>🔄</span>
               <span className="hidden sm:inline">
-                {isFetching ? "Refreshing..." : "Refresh"}
+                {activeIsFetching ? "Refreshing..." : "Refresh"}
               </span>
             </button>
           )}
@@ -366,8 +407,8 @@ export function MapView() {
           className="h-full w-full z-0"
         />
 
-        {/* Empty state when no route is selected */}
-        {!selectedRouteId && (
+        {/* Empty state before a feed is selected */}
+        {!selectedFeedSlug && (
           <div className="absolute inset-0 bg-gray-950/80 backdrop-blur-xs flex items-center justify-center p-6 text-center z-10 pointer-events-none">
             <div className="max-w-md space-y-2">
               <span className="text-3xl" role="img" aria-label="Map">
@@ -384,21 +425,44 @@ export function MapView() {
           </div>
         )}
 
+        {isFeedOverviewEnabled &&
+          !feedVehiclesQuery.isLoading &&
+          feedVehiclesQuery.data?.length === 0 && (
+            <div className="absolute inset-0 bg-gray-950/80 backdrop-blur-xs flex items-center justify-center p-6 text-center z-10 pointer-events-none">
+              <div className="max-w-md space-y-2">
+                <span className="text-3xl" role="img" aria-label="Map">
+                  🚌
+                </span>
+                <p className="text-sm font-medium text-gray-300">
+                  No current live vehicle positions
+                </p>
+                <p className="text-xs text-gray-500">
+                  The provider may be temporarily unavailable. Fresh positions
+                  will appear here when the feed updates.
+                </p>
+              </div>
+            </div>
+          )}
+
         {/* Loading Overlay (initial query only) */}
-        {isLoading && (
+        {activeIsLoading && (
           <div
             role="status"
             className="absolute inset-0 bg-gray-950/70 backdrop-blur-xs flex items-center justify-center p-6 z-10"
           >
             <div className="flex items-center gap-2 text-sm text-blue-400">
               <span className="animate-spin text-lg">⏳</span>
-              <span>Loading route geometry & vehicles...</span>
+              <span>
+                {selectedRouteId
+                  ? "Loading route geometry & vehicles..."
+                  : "Loading live vehicle positions..."}
+              </span>
             </div>
           </div>
         )}
 
         {/* Transient Refresh Error Warning (preserves existing map data) */}
-        {hasError && routeMapData && (
+        {hasError && activeHasData && (
           <div
             role="alert"
             className="absolute inset-x-4 top-4 bg-amber-950/90 border border-amber-800 text-amber-200 text-xs rounded-md p-2.5 flex items-center justify-between z-10"
@@ -406,14 +470,14 @@ export function MapView() {
             <div className="flex items-center gap-2">
               <span>⚠️</span>
               <span>
-                Live vehicle refresh failed ({error instanceof Error ? error.message : "Network error"}).
-                Displaying data from {formatLastUpdated(dataUpdatedAt)}.
+                Live vehicle refresh failed ({activeError instanceof Error ? activeError.message : "Network error"}).
+                Displaying data from {formatLastUpdated(activeDataUpdatedAt)}.
               </span>
             </div>
             <button
               type="button"
-              onClick={() => void refetch()}
-              disabled={isFetching}
+              onClick={() => void refreshActiveMap()}
+              disabled={activeIsFetching}
               className="text-amber-100 underline hover:no-underline text-xs ml-2 cursor-pointer shrink-0 disabled:opacity-50"
             >
               Retry
@@ -422,19 +486,19 @@ export function MapView() {
         )}
 
         {/* Initial Load Error Overlay (when no data exists) */}
-        {hasError && !routeMapData && (
+        {hasError && !activeHasData && (
           <div
             role="alert"
             className="absolute inset-x-4 top-4 bg-red-950/90 border border-red-800 text-red-200 text-xs rounded-md p-3 flex items-center justify-between z-10"
           >
             <span>
-              {error instanceof Error
-                ? error.message
-                : "Failed to load route map data"}
+              {activeError instanceof Error
+                ? activeError.message
+                : "Failed to load live vehicle data"}
             </span>
             <button
               type="button"
-              onClick={() => void refetch()}
+              onClick={() => void refreshActiveMap()}
               className="text-white underline hover:no-underline ml-2 cursor-pointer"
             >
               Retry

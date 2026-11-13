@@ -459,6 +459,48 @@ async def test_get_route_map_not_found(api_client: AsyncClient) -> None:
     assert resp2.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_list_live_vehicles_without_static_feed(
+    api_client: AsyncClient,
+    test_db,
+) -> None:
+    """A realtime-only feed can expose fresh vehicles without GTFS route tables."""
+    now = datetime.now(UTC)
+    async with test_db() as session:
+        feed = TransitFeed(
+            city_name="Live Only City",
+            slug="live-only",
+            static_gtfs_url=None,
+            realtime_vehicle_positions_url="https://data.example.com/vehicles.pb",
+            api_key_env_var="TRANSIT_API_KEY",
+            api_key_query_param="key",
+            is_live_tracking_enabled=True,
+        )
+        session.add(feed)
+        await session.flush()
+        session.add(
+            VehiclePosition(
+                feed_id=feed.id,
+                entity_id="LIVE_1",
+                vehicle_id="BUS_1",
+                route_id="ROUTE_42",
+                latitude=28.6139,
+                longitude=77.2090,
+                vehicle_timestamp=now,
+            )
+        )
+        await session.commit()
+
+    response = await api_client.get("/api/v1/feeds/live-only/vehicles")
+    assert response.status_code == 200
+    vehicles = response.json()["data"]
+    assert len(vehicles) == 1
+    assert vehicles[0]["entity_id"] == "LIVE_1"
+    assert vehicles[0]["route_id"] == "ROUTE_42"
+    assert vehicles[0]["latitude"] == 28.6139
+    assert vehicles[0]["longitude"] == 77.2090
+
+
 # ---------------------------------------------------------------------------
 # 3. Stops Exploration Tests
 # ---------------------------------------------------------------------------

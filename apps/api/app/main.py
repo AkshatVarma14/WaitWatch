@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.database.session import engine
 from app.services.realtime.db_listener import run_db_listener
 from app.services.realtime.websocket_manager import ws_manager
+from app.services.realtime.worker import run_realtime_poll_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,15 +33,19 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     )
     stop_event = asyncio.Event()
     listener_task: asyncio.Task[None] | None = None
+    realtime_poller_task: asyncio.Task[None] | None = None
     if settings.environment != "test":
         listener_task = asyncio.create_task(run_db_listener(ws_manager, stop_event))
+        realtime_poller_task = asyncio.create_task(run_realtime_poll_loop(stop_event))
     yield
     logger.info("WaitWatch API shutting down")
     stop_event.set()
-    if listener_task is not None:
-        listener_task.cancel()
+    for task in (listener_task, realtime_poller_task):
+        if task is not None:
+            task.cancel()
         try:
-            await asyncio.wait_for(listener_task, timeout=2.0)
+            if task is not None:
+                await asyncio.wait_for(task, timeout=2.0)
         except (TimeoutError, asyncio.CancelledError):
             pass
     await ws_manager.close_all()

@@ -4,6 +4,7 @@ import {
   fetchApi,
   fetchArrivals,
   fetchFeeds,
+  fetchFeedVehicles,
   fetchHealth,
   fetchRouteMap,
   fetchRoutes,
@@ -133,6 +134,27 @@ describe("api client", () => {
     expect(res).toEqual(mockMapData);
     expect(fetchSpy).toHaveBeenCalledWith(
       expect.stringMatching(/\/api\/v1\/feeds\/metro-city\/routes\/R1\/map/),
+    );
+  });
+
+  it("fetchFeedVehicles loads live positions without static route data", async () => {
+    const vehicles = [{
+      entity_id: "vehicle-1",
+      route_id: "ROUTE_42",
+      latitude: 28.6139,
+      longitude: 77.209,
+      observed_at: "2026-11-11T12:00:00Z",
+    }];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: vehicles }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    expect(await fetchFeedVehicles("delhi-bus")).toEqual(vehicles);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/v1\/feeds\/delhi-bus\/vehicles/),
     );
   });
 

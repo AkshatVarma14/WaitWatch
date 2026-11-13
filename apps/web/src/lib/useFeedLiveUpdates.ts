@@ -129,6 +129,9 @@ export function useFeedLiveUpdates(feedSlug: string | null) {
             queryKey: ["routeMap", feedSlug],
           });
           void queryClient.invalidateQueries({
+            queryKey: ["feedVehicles", feedSlug],
+          });
+          void queryClient.invalidateQueries({
             queryKey: ["arrivals", feedSlug],
           });
         }
@@ -172,6 +175,9 @@ export function useFeedLiveUpdates(feedSlug: string | null) {
               setLastLiveUpdateAt(feedUpdate.timestamp);
               void queryClient.invalidateQueries({
                 queryKey: ["routeMap", feedSlug],
+              });
+              void queryClient.invalidateQueries({
+                queryKey: ["feedVehicles", feedSlug],
               });
               void queryClient.invalidateQueries({
                 queryKey: ["arrivals", feedSlug],

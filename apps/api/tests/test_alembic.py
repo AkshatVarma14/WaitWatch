@@ -16,10 +16,10 @@ def test_alembic_config_resolves() -> None:
     alembic_cfg.set_main_option("script_location", str(api_dir / "alembic"))
     script = ScriptDirectory.from_config(alembic_cfg)
 
-    # Verify head migration is 0006_trip_updates
+    # Verify head migration is 0007_live_only_feeds
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "0006_trip_updates"
+    assert heads[0] == "0007_live_only_feeds"
 
     # Verify initial migration
     rev_0001 = script.get_revision("0001_initial_transit_models")
@@ -55,6 +55,12 @@ def test_alembic_config_resolves() -> None:
     assert rev_0006 is not None
     assert rev_0006.down_revision == "0005_shapes"
     assert "trip_updates" in (rev_0006.doc or "").lower()
+
+    # Verify forward migration 0007
+    rev_0007 = script.get_revision("0007_live_only_feeds")
+    assert rev_0007 is not None
+    assert rev_0007.down_revision == "0006_trip_updates"
+    assert "realtime-only feeds" in (rev_0007.doc or "").lower()
 
 
 def test_migration_environment_settings_integration() -> None:

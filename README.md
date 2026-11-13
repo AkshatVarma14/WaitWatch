@@ -123,7 +123,7 @@ docker compose down
 
 > **Browser Networking Note**: Client-side JavaScript executes in the user's browser, not inside the Docker network. Use `http://localhost:8000` (or leave empty `""` to use Nginx reverse proxying). Never set `VITE_API_URL` to internal Docker hostnames like `http://api:8000`.
 
-> **Runtime verification**: The local Docker Compose stack was smoke-tested on 2026-11-11. The database, API, and web services reported healthy, the migration service exited successfully, and `/api/health` reported a connected database. The transit feed list is currently empty; add a licensed GTFS feed before expecting routes, stops, arrivals, or vehicles to appear.
+> **Runtime verification**: The local Docker Compose stack was smoke-tested on 2026-11-13. The database, API, and web services reported healthy, the migration service exited successfully, and `/api/health` reported a connected database. The authorized Delhi realtime worker successfully polled and stored about 5,300 current vehicle positions; the map displays up to 2,000 markers at a time. The full licensed GTFS archive is still pending portal access, so static routes, stops, and schedule-based arrivals become available after it is downloaded and imported.
 
 ## Environment Configuration
 
@@ -139,7 +139,26 @@ The `.env.example` file contains all required environment variables. Copy it to 
 
 > **Security:** Never commit your `.env` file. It is included in `.gitignore`.
 
-### Register and import a transit feed
+### Configure the Delhi bus feed
+
+WaitWatch uses the official **Delhi Buses: GTFS Static Data – DTC / DoT** listing from the [Delhi Transport Stack catalogue](https://delhi.transportstack.in/data-services) and the authorized Open Transit Data Delhi vehicle-position API.
+
+1. Register or sign in to the Delhi Transport Stack portal.
+2. Request the Delhi bus static GTFS dataset from **Data & Services**.
+3. After the portal confirms access by email, download the archive.
+4. Save it as `data/gtfs/delhi-buses.zip` in this repository. The directory is ignored by Git because the licensed archive should remain local.
+5. Keep the already configured `DELHI_TRANSIT_API_KEY` in `.env`; the setup script never asks for or prints the key.
+6. From PowerShell at the repository root, run:
+
+```powershell
+.\scripts\setup-delhi-transit.ps1
+```
+
+The script builds and starts Docker Compose, registers the `delhi-bus` feed with the API key supplied only through the environment, and imports the static archive when it is present. If the archive is not available yet, the live map still starts and shows the bus positions without route matching. Run the script again after saving the archive to import it. The app footer attributes static data to Delhi Transport Stack and live positions to Open Transit Data Delhi, as required by the dataset terms.
+
+The public sample archive is intentionally not used as the production feed: it contains only a small subset of GTFS rows.
+
+### Register and import another transit feed
 
 Feed registration is an operator-only CLI action; the public API does not expose feed-management endpoints. The command records source metadata and an optional **environment-variable name** for a provider key. It never accepts the key value, and live tracking stays disabled unless explicitly enabled.
 

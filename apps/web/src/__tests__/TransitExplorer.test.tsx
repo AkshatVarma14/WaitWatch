@@ -262,6 +262,7 @@ describe("Transit Explorer Components", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     useAppStore.getState().reset();
+    vi.spyOn(api, "fetchFeedVehicles").mockResolvedValue([]);
   });
 
   describe("FeedSelector", () => {
@@ -655,6 +656,32 @@ describe("Transit Explorer Components", () => {
       expect(screen.getAllByText(/OpenStreetMap/i).length).toBeGreaterThanOrEqual(1);
     });
 
+    it("shows live vehicles without requiring static route data", async () => {
+      useAppStore.getState().setSelectedFeedSlug("delhi-bus");
+      vi.spyOn(api, "fetchFeedVehicles").mockResolvedValue([
+        {
+          entity_id: "vehicle-1",
+          vehicle_id: "bus-1",
+          vehicle_label: "DTC 1",
+          route_id: "ROUTE_42",
+          latitude: 28.6139,
+          longitude: 77.209,
+          bearing: 90,
+          speed: 5,
+          current_status: 2,
+          trip_id: null,
+          observed_at: "2026-11-11T12:00:00Z",
+        },
+      ]);
+
+      renderWithClient(<MapView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Live vehicles across feed/i)).toBeInTheDocument();
+        expect(screen.getByText(/1 Live Vehicle/i)).toBeInTheDocument();
+      });
+    });
+
     it("displays warning badge when route shape is unavailable without fabricating lines", async () => {
       useAppStore.getState().setSelectedFeedSlug("metro-city");
       useAppStore.getState().setSelectedRouteId("route-red");
@@ -903,9 +930,11 @@ describe("Transit Explorer Components", () => {
       expect(useAppStore.getState().selectedVehicleId).toBeNull();
       expect(useAppStore.getState().selectedStop).toBeNull();
 
-      // Map returns to "Select a Transit Route" prompt
+      // The route selection clears and the map returns to the live feed overview.
       await waitFor(() => {
-        expect(screen.getByText("Select a Transit Route")).toBeInTheDocument();
+        expect(
+          screen.getByText("No current live vehicle positions"),
+        ).toBeInTheDocument();
       });
       expect(screen.queryByText(/• Route B1/i)).not.toBeInTheDocument();
     });

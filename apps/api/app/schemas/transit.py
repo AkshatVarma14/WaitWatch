@@ -55,7 +55,9 @@ class FeedSummaryResponse(BaseModel):
 class FeedDetailResponse(FeedSummaryResponse):
     """Full detail of a transit feed / city configuration."""
 
-    static_gtfs_url: str = Field(..., description="Static GTFS feed URL")
+    static_gtfs_url: str | None = Field(
+        None, description="Static GTFS feed URL, when available"
+    )
     realtime_vehicle_positions_url: str | None = Field(
         None, description="GTFS-RT VehiclePositions URL"
     )
@@ -236,6 +238,7 @@ class RouteMapVehicleResponse(BaseModel):
     vehicle_label: str | None = Field(
         None, description="Passenger-facing vehicle label"
     )
+    route_id: str | None = Field(None, description="Provider route identifier")
     latitude: float = Field(..., ge=-90.0, le=90.0, description="WGS84 latitude")
     longitude: float = Field(..., ge=-180.0, le=180.0, description="WGS84 longitude")
     bearing: float | None = Field(

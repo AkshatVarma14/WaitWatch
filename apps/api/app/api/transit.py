@@ -156,6 +156,86 @@ async def get_feed(
 
 
 @router.get(
+    "/feeds/{feed_slug}/vehicles",
+    response_model=ItemEnvelope[list[RouteMapVehicleResponse]],
+    summary="List fresh live vehicles for a feed, even without static routes",
+)
+async def list_feed_vehicles(
+    feed_slug: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=64,
+            pattern=r"^[a-zA-Z0-9_-]+$",
+            description="Feed slug or numeric ID identifier",
+        ),
+    ],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    reference_time: Annotated[
+        datetime | None,
+        Query(description="Reference time for telemetry freshness (defaults to now)"),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 2000,
+) -> ItemEnvelope[list[RouteMapVehicleResponse]]:
+    """Return current geolocated vehicles without requiring imported GTFS routes."""
+    try:
+        feed = await _get_feed_by_slug(session, feed_slug)
+        now = reference_time or datetime.now(UTC)
+        fresh_since = now - timedelta(seconds=300)
+        max_future = now + timedelta(seconds=60)
+        vehicle_time = func.coalesce(
+            VehiclePosition.vehicle_timestamp,
+            VehiclePosition.feed_timestamp,
+            VehiclePosition.recorded_at,
+        )
+        stmt = (
+            select(VehiclePosition)
+            .where(
+                VehiclePosition.feed_id == feed.id,
+                VehiclePosition.latitude.is_not(None),
+                VehiclePosition.longitude.is_not(None),
+                vehicle_time >= fresh_since,
+                vehicle_time <= max_future,
+            )
+            .order_by(vehicle_time.desc(), VehiclePosition.entity_id.asc())
+            .limit(limit)
+        )
+        vehicles = (await session.execute(stmt)).scalars().all()
+        return ItemEnvelope(
+            data=[
+                RouteMapVehicleResponse(
+                    entity_id=vehicle.entity_id,
+                    vehicle_id=vehicle.vehicle_id,
+                    vehicle_label=vehicle.vehicle_label,
+                    route_id=vehicle.route_id,
+                    latitude=vehicle.latitude,
+                    longitude=vehicle.longitude,
+                    bearing=vehicle.bearing,
+                    speed=vehicle.speed,
+                    current_status=vehicle.current_status,
+                    trip_id=vehicle.trip_id,
+                    observed_at=(
+                        vehicle.vehicle_timestamp
+                        or vehicle.feed_timestamp
+                        or vehicle.recorded_at
+                    ),
+                )
+                for vehicle in vehicles
+            ]
+        )
+    except HTTPException:
+        raise
+    except (OperationalError, DBAPIError, TimeoutError, OSError) as exc:
+        logger.warning(
+            "Database unavailable in list_feed_vehicles: %s", type(exc).__name__
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service is temporarily unavailable",
+        ) from exc
+
+
+@router.get(
     "/feeds/{feed_slug}/routes",
     response_model=PaginatedResponse[RouteResponse],
     summary="List and filter transit routes within a feed",
@@ -516,6 +596,7 @@ async def get_route_map(
                 entity_id=v.entity_id,
                 vehicle_id=v.vehicle_id,
                 vehicle_label=v.vehicle_label,
+                route_id=v.route_id,
                 latitude=v.latitude,
                 longitude=v.longitude,
                 bearing=v.bearing,

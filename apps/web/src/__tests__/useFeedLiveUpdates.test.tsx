@@ -266,7 +266,7 @@ describe("useFeedLiveUpdates hook", () => {
       ws.triggerMessage(event);
     });
 
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(3);
 
     // Resend identical event payload (e.g. duplicate notification from listener)
     act(() => {
@@ -274,6 +274,6 @@ describe("useFeedLiveUpdates hook", () => {
     });
 
     // Should NOT have triggered invalidation again
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(3);
   });
 });

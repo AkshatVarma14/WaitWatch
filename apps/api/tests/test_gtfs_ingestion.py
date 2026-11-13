@@ -704,6 +704,7 @@ def _register_feed_args(**overrides: object) -> argparse.Namespace:
         "trip_updates_url": "",
         "alerts_url": "",
         "api_key_env_var": "DEMO_TRANSIT_API_KEY",
+        "api_key_query_param": "",
         "enable_live_tracking": False,
     }
     values.update(overrides)
@@ -732,6 +733,7 @@ async def test_cli_register_feed_stores_only_key_environment_reference(
     ).scalar_one()
     assert feed.city_name == "Demo City"
     assert feed.api_key_env_var == "DEMO_TRANSIT_API_KEY"
+    assert feed.api_key_query_param is None
     assert feed.is_live_tracking_enabled is False
     assert feed.feed_status == "active"
 
@@ -787,6 +789,43 @@ async def test_cli_register_feed_rejects_embedded_credentials_and_unconfigured_l
 
     assert "never-log-me" not in caplog.text
     mock_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cli_register_realtime_only_feed_without_static_archive(
+    async_test_session: AsyncSession,
+) -> None:
+    """Register a live feed while its provider's static archive is unavailable."""
+    from app.services.gtfs.cli import run_register_feed
+
+    mock_factory = MagicMock()
+    mock_factory.return_value.__aenter__ = AsyncMock(return_value=async_test_session)
+    mock_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("app.services.gtfs.cli.async_session_factory", mock_factory):
+        code = await run_register_feed(
+            _register_feed_args(
+                static_url="",
+                vehicle_positions_url="https://data.example.com/VehiclePositions.pb",
+                api_key_env_var="DELHI_TRANSIT_API_KEY",
+                api_key_query_param="key",
+                enable_live_tracking=True,
+            )
+        )
+
+    assert code == 0
+    feed = (
+        await async_test_session.execute(
+            select(TransitFeed).where(TransitFeed.slug == "demo-city")
+        )
+    ).scalar_one()
+    assert feed.static_gtfs_url is None
+    assert (
+        feed.realtime_vehicle_positions_url
+        == "https://data.example.com/VehiclePositions.pb"
+    )
+    assert feed.api_key_query_param == "key"
+    assert feed.is_live_tracking_enabled is True
 
 
 @pytest.mark.asyncio

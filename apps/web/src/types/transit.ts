@@ -89,6 +89,7 @@ export interface RouteMapVehicle {
   entity_id: string;
   vehicle_id: string | null;
   vehicle_label: string | null;
+  route_id?: string | null;
   latitude: number;
   longitude: number;
   bearing: number | null;

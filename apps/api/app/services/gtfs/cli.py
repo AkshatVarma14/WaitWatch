@@ -43,11 +43,12 @@ async def run_register_feed(args: argparse.Namespace) -> int:
     """Register one transit feed for later static or realtime ingestion."""
     slug = args.slug.strip()
     city_name = args.city_name.strip()
-    static_url = args.static_url.strip()
+    static_url = args.static_url.strip() or None
     realtime_vehicle_url = args.vehicle_positions_url.strip() or None
     realtime_trip_updates_url = args.trip_updates_url.strip() or None
     realtime_alerts_url = args.alerts_url.strip() or None
     api_key_env_var = args.api_key_env_var.strip() or None
+    api_key_query_param = args.api_key_query_param.strip() or None
 
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) or len(slug) > 64:
         logger.error("Feed slug must be lowercase letters, numbers, and hyphens")
@@ -55,7 +56,7 @@ async def run_register_feed(args: argparse.Namespace) -> int:
     if not city_name or len(city_name) > 100:
         logger.error("City name is required and must be at most 100 characters")
         return 1
-    if len(static_url) > 2048 or not _is_safe_http_url(static_url):
+    if static_url and (len(static_url) > 2048 or not _is_safe_http_url(static_url)):
         logger.error("Static GTFS source must be a safe absolute HTTP(S) URL")
         return 1
 
@@ -64,6 +65,9 @@ async def run_register_feed(args: argparse.Namespace) -> int:
         realtime_trip_updates_url,
         realtime_alerts_url,
     )
+    if not static_url and not any(realtime_urls):
+        logger.error("Configure a static GTFS source or at least one realtime source")
+        return 1
     if any(
         url and (len(url) > 2048 or not _is_safe_http_url(url)) for url in realtime_urls
     ):
@@ -79,6 +83,17 @@ async def run_register_feed(args: argparse.Namespace) -> int:
         or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env_var)
     ):
         logger.error("API key setting must be an environment-variable name")
+        return 1
+    if api_key_query_param and (
+        len(api_key_query_param) > 100
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_query_param)
+    ):
+        logger.error("API key query setting must be a parameter name")
+        return 1
+    if api_key_query_param and not api_key_env_var:
+        logger.error(
+            "API key query setting requires an API key environment-variable name"
+        )
         return 1
 
     async with async_session_factory() as session:
@@ -96,6 +111,7 @@ async def run_register_feed(args: argparse.Namespace) -> int:
             realtime_trip_updates_url=realtime_trip_updates_url,
             realtime_alerts_url=realtime_alerts_url,
             api_key_env_var=api_key_env_var,
+            api_key_query_param=api_key_query_param,
             is_live_tracking_enabled=args.enable_live_tracking,
         )
         session.add(feed)
@@ -190,7 +206,7 @@ def main() -> None:
     register_parser.add_argument("--slug", required=True, help="Lowercase feed slug")
     register_parser.add_argument("--city-name", required=True, help="Display city name")
     register_parser.add_argument(
-        "--static-url", required=True, help="Authorized static GTFS source URL"
+        "--static-url", default="", help="Optional authorized static GTFS source URL"
     )
     register_parser.add_argument(
         "--vehicle-positions-url", default="", help="Optional GTFS-RT vehicle URL"
@@ -205,6 +221,11 @@ def main() -> None:
         "--api-key-env-var",
         default="",
         help="Name of the environment variable holding a provider key; never the key",
+    )
+    register_parser.add_argument(
+        "--api-key-query-param",
+        default="",
+        help="Query parameter name for a provider key (for example, key)",
     )
     register_parser.add_argument(
         "--enable-live-tracking",

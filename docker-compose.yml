@@ -78,6 +78,9 @@ services:
       API_PORT: 8000
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:80,http://127.0.0.1:3000,http://127.0.0.1:5173}
       DELHI_TRANSIT_API_KEY: ${DELHI_TRANSIT_API_KEY:-}
+    volumes:
+      # Keep the licensed source archive on the host and mount it read-only.
+      - ./data/gtfs:/data/gtfs:ro
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
