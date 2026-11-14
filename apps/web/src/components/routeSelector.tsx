@@ -79,8 +79,8 @@ export function RouteSelector() {
 
       {!isLoading && !isError && routes.length === 0 && (
         <p role="status" className="text-xs text-amber-300">
-          Static routes are not imported yet. Live vehicle positions remain
-          available on the map.
+          Scheduled routes are not currently available for this feed. Live
+          vehicle positions remain visible on the map.
         </p>
       )}
 

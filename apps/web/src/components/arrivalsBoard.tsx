@@ -315,10 +315,10 @@ function ArrivalCard({ arrival, timezone }: ArrivalCardProps) {
             {source.label}
           </span>
 
-          {/* Telemetry Age */}
+          {/* Live Observation Age */}
           <span
             className="text-[11px] text-gray-500 hidden sm:inline"
-            title={arrival.source_observation_time ?? "No telemetry"}
+            title={arrival.source_observation_time ?? "No live data"}
           >
             {telemetryAge}
           </span>

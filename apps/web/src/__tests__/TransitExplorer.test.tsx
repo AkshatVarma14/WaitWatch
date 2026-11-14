@@ -634,7 +634,7 @@ describe("Transit Explorer Components", () => {
       renderWithClient(<MapView />);
       expect(screen.getByText("Select a Transit Route")).toBeInTheDocument();
       expect(
-        screen.getByText(/Choose a route above to visualize its true GTFS shape polyline/i),
+        screen.getByText(/Choose a route above to view its route path/i),
       ).toBeInTheDocument();
       // Tile attribution is present
       expect(screen.getAllByText(/OpenStreetMap/i).length).toBeGreaterThanOrEqual(1);
@@ -651,7 +651,7 @@ describe("Transit Explorer Components", () => {
         expect(screen.getByText(/• Route B1/i)).toBeInTheDocument();
       });
 
-      expect(screen.getByText(/GTFS Shape Active \(1 track\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Route Path Active/i)).toBeInTheDocument();
       expect(screen.getByText(/2 Live Vehicles/i)).toBeInTheDocument();
       expect(screen.getAllByText(/OpenStreetMap/i).length).toBeGreaterThanOrEqual(1);
     });
@@ -910,7 +910,7 @@ describe("Transit Explorer Components", () => {
       // 3. Map loads Route B1 with active shapes and vehicles
       await waitFor(() => {
         expect(screen.getByText(/• Route B1/i)).toBeInTheDocument();
-        expect(screen.getByText(/GTFS Shape Active \(1 track\)/i)).toBeInTheDocument();
+        expect(screen.getByText(/Route Path Active/i)).toBeInTheDocument();
       });
 
       // 4. In details panel, select vehicle Fleet 4001

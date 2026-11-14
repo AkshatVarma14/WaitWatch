@@ -105,7 +105,7 @@ export function formatPredictionSource(source: string): PredictionSourceInfo {
         badgeClass:
           "bg-indigo-900/60 text-indigo-300 border border-indigo-700/60",
         description:
-          "Estimated using real-time vehicle telemetry and historical stop delay analysis.",
+          "Estimated using live vehicle positions and historical delay patterns.",
       };
     case "TRIP_UPDATE":
       return {
@@ -113,14 +113,14 @@ export function formatPredictionSource(source: string): PredictionSourceInfo {
         badgeClass:
           "bg-emerald-900/60 text-emerald-300 border border-emerald-700/60",
         description:
-          "Estimated using official GTFS-Realtime trip update telemetry.",
+          "Estimated using official real-time transit updates.",
       };
     case "SCHEDULE_ONLY":
       return {
         label: "Schedule",
         badgeClass: "bg-gray-800 text-gray-300 border border-gray-700",
         description:
-          "Based purely on timetable schedule; active vehicle telemetry not currently available.",
+          "Based on timetable schedule; live tracking is not currently reporting for this trip.",
       };
     default:
       return {
@@ -132,20 +132,20 @@ export function formatPredictionSource(source: string): PredictionSourceInfo {
 }
 
 /**
- * Formats a telemetry observation timestamp into a concise relative description.
+ * Formats a live observation timestamp into a concise relative description.
  */
 export function formatObservationAge(
   isoString: string | null | undefined,
   nowMs: number = Date.now(),
 ): string {
   if (!isoString) {
-    return "No recent telemetry";
+    return "No live update";
   }
 
   const date = new Date(isoString);
   const timeMs = date.getTime();
   if (Number.isNaN(timeMs)) {
-    return "Telemetry time unavailable";
+    return "Time unavailable";
   }
 
   const diffSeconds = Math.max(0, Math.floor((nowMs - timeMs) / 1000));

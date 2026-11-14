@@ -78,14 +78,14 @@ describe("formatters", () => {
       const info = formatPredictionSource("HISTORY_ADJUSTED");
       expect(info.label).toBe("Live + History");
       expect(info.badgeClass).toContain("text-indigo-300");
-      expect(info.description).toContain("real-time vehicle telemetry");
+      expect(info.description).toContain("live vehicle positions");
     });
 
     it("formats TRIP_UPDATE badge", () => {
       const info = formatPredictionSource("TRIP_UPDATE");
       expect(info.label).toBe("Live TripUpdate");
       expect(info.badgeClass).toContain("text-emerald-300");
-      expect(info.description).toContain("GTFS-Realtime trip update");
+      expect(info.description).toContain("official real-time transit updates");
     });
 
     it("formats SCHEDULE_ONLY badge", () => {
@@ -107,10 +107,10 @@ describe("formatters", () => {
 
     it("returns placeholder on null or invalid date", () => {
       expect(formatObservationAge(null, fixedNow)).toBe(
-        "No recent telemetry",
+        "No live update",
       );
       expect(formatObservationAge("invalid", fixedNow)).toBe(
-        "Telemetry time unavailable",
+        "Time unavailable",
       );
     });
 

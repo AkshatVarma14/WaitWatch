@@ -352,25 +352,23 @@ export function MapView() {
             </div>
           )}
 
-          {/* Shape Availability Disclosure */}
+          {/* Route Path Availability Disclosure */}
           {routeMapData && (
             <>
               {routeMapData.shapes.length > 0 ? (
                 <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  GTFS Shape Active ({routeMapData.shapes.length}{" "}
-                  {routeMapData.shapes.length === 1 ? "track" : "tracks"})
+                  Route Path Active
                 </span>
               ) : (
                 <span
                   role="status"
                   className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800"
-                  title="GTFS shapes.txt was not included in this feed. Displaying available stop locations."
+                  title="Route geometry was not included in this feed. Displaying available stop locations."
                 >
                   ⚠️ Route shape unavailable — showing stops only
                 </span>
               )}
-
             </>
           )}
 
@@ -418,8 +416,8 @@ export function MapView() {
                 Select a Transit Route
               </p>
               <p className="text-xs text-gray-500">
-                Choose a route above to visualize its true GTFS shape polyline,
-                ordered passenger stops, and live vehicle positions.
+                Choose a route above to view its route path, scheduled stops,
+                and live vehicle positions.
               </p>
             </div>
           </div>
@@ -454,7 +452,7 @@ export function MapView() {
               <span className="animate-spin text-lg">⏳</span>
               <span>
                 {selectedRouteId
-                  ? "Loading route geometry & vehicles..."
+                  ? "Loading route & vehicles..."
                   : "Loading live vehicle positions..."}
               </span>
             </div>
@@ -507,10 +505,10 @@ export function MapView() {
         )}
       </div>
 
-      {/* Map Footer: Attribution & Provider Policy Note */}
-      <div className="px-4 py-2 bg-gray-950 border-t border-gray-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500">
+      {/* Map Footer: Attribution */}
+      <div className="px-4 py-2 bg-gray-950 border-t border-gray-800 flex items-center justify-between text-[11px] text-gray-500">
         <span>
-          Tiles: &copy;{" "}
+          Map data: &copy;{" "}
           <a
             href="https://www.openstreetmap.org/copyright"
             target="_blank"
@@ -519,10 +517,7 @@ export function MapView() {
           >
             OpenStreetMap
           </a>{" "}
-          contributors (Demo standard tiles)
-        </span>
-        <span className="hidden sm:inline text-gray-600">
-          Configurable via <code>VITE_MAP_TILE_URL</code>
+          contributors
         </span>
       </div>
     </div>

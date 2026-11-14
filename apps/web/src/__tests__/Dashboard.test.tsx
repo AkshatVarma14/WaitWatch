@@ -58,11 +58,11 @@ describe("Dashboard", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the Stage 4 status badge", () => {
+  it("does not render development milestone badges", () => {
     renderWithClient(<Dashboard />);
     expect(
-      screen.getByText(/Stage 4: Map & Transit Explorer/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/Stage 4/i),
+    ).not.toBeInTheDocument();
   });
 
   it("renders navigation tabs and switches between Stop Explorer and Direct Trip Planner", () => {

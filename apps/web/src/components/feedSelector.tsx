@@ -104,7 +104,7 @@ export function FeedSelector() {
 
           {activeFeed.last_realtime_poll_at && (
             <span className="text-gray-500 text-xs ml-auto">
-              Poll:{" "}
+              Updated:{" "}
               {new Date(activeFeed.last_realtime_poll_at).toLocaleTimeString()}
             </span>
           )}

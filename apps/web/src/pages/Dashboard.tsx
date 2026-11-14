@@ -66,10 +66,6 @@ export function Dashboard() {
                       : "Connecting..."}
               </span>
             )}
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-900 border border-gray-800">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              Stage 4: Map & Transit Explorer
-            </span>
           </div>
         </div>
       </header>
@@ -81,9 +77,7 @@ export function Dashboard() {
             Real-Time Transit Tracking
           </h2>
           <p className="text-sm text-gray-400 mt-1 max-w-3xl">
-            Explore transit feeds, select routes to view true GTFS shape
-            geometry and live vehicles on the map, and get real-time stop arrival
-            predictions.
+            Explore routes and live vehicles on the map, look up stop schedules, and view real-time arrival predictions.
           </p>
         </div>
 
@@ -173,7 +167,7 @@ export function Dashboard() {
       <footer className="border-t border-gray-800 px-6 py-4 bg-gray-950 mt-auto">
         <div className="max-w-7xl mx-auto flex flex-col items-center gap-2 text-xs text-gray-500 text-center">
           <p>
-            WaitWatch v0.4.2 — Interactive Map & Route Visualization
+            WaitWatch — Real-Time Transit Tracking
           </p>
           <p>
             Bus schedule data: {" "}
