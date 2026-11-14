@@ -70,7 +70,75 @@ WaitWatch/
 └── README.md              # This file
 ```
 
-## Local Setup
+## Windows Quickstart (Automated & Reproducible)
+
+To clone and run WaitWatch on a new Windows computer without manually modifying application source code:
+
+### 1. Prerequisites on Windows
+- **Windows 10 / 11** with **PowerShell 5.1+**
+- **Git for Windows**: [git-scm.com](https://git-scm.com/)
+- **Docker Desktop**: [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) (WSL2 Linux backend enabled and engine running)
+
+### 2. Clone the Repository
+```powershell
+git clone https://github.com/AkshatVarma14/WaitWatch.git
+cd WaitWatch
+```
+
+### 3. External Datasets & Credentials
+WaitWatch tracks Delhi public buses using two distinct data feeds. Due to license and privacy terms, credentials and datasets are not committed to Git and must be obtained separately:
+
+| Asset | Source | Acquisition Instructions | Configuration in WaitWatch |
+|---|---|---|---|
+| **Real-time Vehicle Positions (`delhi-bus`)** | [Open Transit Data Delhi](https://otd.delhi.gov.in/) | Sign up for a free developer account to get an API key. | Set `DELHI_TRANSIT_API_KEY=<key>` in `.env` |
+| **Static GTFS Schedules & Routes (`delhi-buses`)** | [Delhi Transport Stack](https://delhi.transportstack.in/data-services) | Sign in and request the **Delhi Buses: GTFS Static Data – DTC / DoT** archive from *Data & Services*. | Save to `data/gtfs/delhi-buses.zip` or pass `-ArchivePath` |
+
+### 4. Run Automated Setup
+Open PowerShell at the repository root and run:
+
+```powershell
+# Allow script execution for the current PowerShell session
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Run automated setup
+.\scripts\setup-delhi-transit.ps1
+```
+
+The script automatically:
+1. Validates prerequisites (PowerShell, Docker Desktop & daemon status).
+2. Creates and initializes `.env` from `.env.example` if missing, generating secure local database credentials.
+3. Locates and validates the static GTFS archive (verifying ZIP integrity, safety bounds, and required tables).
+4. Builds and starts the Docker Compose stack (PostGIS database, Alembic migration runner, FastAPI backend, React/Nginx frontend).
+5. Idempotently registers both transit feeds (`delhi-bus` for live tracking and `delhi-buses` for static routes).
+6. Ingests static GTFS data into PostgreSQL/PostGIS (skipping redundant re-import on subsequent runs).
+7. Verifies health of all services and endpoints.
+
+### 5. Setup Options & Advanced Usage
+```powershell
+# Use a custom or manually downloaded archive path
+.\scripts\setup-delhi-transit.ps1 -ArchivePath "C:\Users\<user>\Downloads\delhi_buses_static_gtfs_v1.zip"
+
+# Verify archive against expected SHA-256 checksum
+.\scripts\setup-delhi-transit.ps1 -ExpectedSha256 "8eb05d9c21e7a6b42d7b49de45cb095b70ddee5b8f7716859330c9784c322f05"
+
+# Automatically download static archive from authorized URL
+.\scripts\setup-delhi-transit.ps1 -DownloadStaticFeed -StaticFeedUrl "https://agency.example/gtfs.zip"
+
+# Start stack without rebuilding Docker images
+.\scripts\setup-delhi-transit.ps1 -SkipBuild
+
+# Force re-ingestion of static data even if already imported
+.\scripts\setup-delhi-transit.ps1 -ForceImport
+```
+
+Once setup completes, access:
+- **Web Application**: `http://localhost:3000/`
+- **Backend API Docs**: `http://localhost:8000/docs`
+- **Health Check**: `http://localhost:8000/api/health`
+
+---
+
+## Local Setup (Manual & Multi-Platform)
 
 ### Prerequisites
 

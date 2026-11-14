@@ -13,7 +13,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database.session import async_session_factory
 from app.models.feed import TransitFeed
+from app.services.gtfs.archive import validate_archive
 from app.services.gtfs.downloader import SENSITIVE_PARAM_NAMES
+from app.services.gtfs.exceptions import GTFSSecurityError, GTFSValidationError
 from app.services.gtfs.service import GTFSIngestionService
 
 logging.basicConfig(
@@ -100,6 +102,12 @@ async def run_register_feed(args: argparse.Namespace) -> int:
         existing_stmt = select(TransitFeed.id).where(TransitFeed.slug == slug)
         existing_id = (await session.execute(existing_stmt)).scalar_one_or_none()
         if existing_id is not None:
+            if getattr(args, "allow_existing", False):
+                logger.info(
+                    "Feed slug %s is already registered; keeping configuration",
+                    slug,
+                )
+                return 0
             logger.error("Feed slug is already registered; no changes were made")
             return 1
 
@@ -191,6 +199,31 @@ async def run_ingest(args: argparse.Namespace) -> int:
             return 1
 
 
+def run_validate_archive(args: argparse.Namespace) -> int:
+    """Validate a local GTFS zip archive for integrity and required schema files."""
+    archive_path = Path(args.file)
+    try:
+        tables = validate_archive(
+            archive_path,
+            expected_sha256=args.expected_sha256,
+        )
+        logger.info(
+            "Archive validation passed! Found %d GTFS tables: %s",
+            len(tables),
+            ", ".join(sorted(tables.keys())),
+        )
+        return 0
+    except GTFSSecurityError as exc:
+        logger.error("Archive security or checksum validation failed: %s", exc)
+        return 1
+    except GTFSValidationError as exc:
+        logger.error("Archive schema validation failed: %s", exc)
+        return 1
+    except Exception as exc:
+        logger.error("Archive validation error: %s", exc)
+        return 1
+
+
 def main() -> None:
     """CLI entrypoint."""
     parser = argparse.ArgumentParser(
@@ -232,6 +265,11 @@ def main() -> None:
         action="store_true",
         help="Enable live tracking when an authorized realtime source is configured",
     )
+    register_parser.add_argument(
+        "--allow-existing",
+        action="store_true",
+        help="Succeed idempotently if the feed slug is already registered",
+    )
 
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a static GTFS feed")
     ingest_parser.add_argument("--feed-id", type=int, help="Internal transit feed ID")
@@ -246,12 +284,29 @@ def main() -> None:
         help="Batch chunk size for database inserts (default 1000)",
     )
 
+    validate_parser = subparsers.add_parser(
+        "validate-archive",
+        help="Validate GTFS zip archive integrity, required tables, and checksum",
+    )
+    validate_parser.add_argument(
+        "--file", required=True, type=str, help="Path to local GTFS zip archive"
+    )
+    validate_parser.add_argument(
+        "--expected-sha256",
+        type=str,
+        default=None,
+        help="Optional expected SHA-256 checksum",
+    )
+
     args = parser.parse_args()
     if args.command == "register":
         exit_code = asyncio.run(run_register_feed(args))
         sys.exit(exit_code)
     if args.command == "ingest":
         exit_code = asyncio.run(run_ingest(args))
+        sys.exit(exit_code)
+    if args.command == "validate-archive":
+        exit_code = run_validate_archive(args)
         sys.exit(exit_code)
 
 

@@ -2,6 +2,7 @@
 
 import logging
 import re
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
@@ -141,6 +142,86 @@ async def download_gtfs_feed(
             f"Feed download timed out after {timeout_seconds}s from {masked_url}"
         ) from exc
     except httpx.RequestError as exc:
+        raise GTFSDownloadError(
+            f"Network error downloading feed from {masked_url}: {exc}"
+        ) from exc
+
+
+async def download_gtfs_archive_to_file(
+    url: str,
+    destination: Path | str,
+    *,
+    api_key: str | None = None,
+    api_key_header: str = "Authorization",
+    headers: dict[str, str] | None = None,
+    max_bytes: int = DEFAULT_MAX_ARCHIVE_BYTES,
+    timeout_seconds: float = 60.0,
+) -> Path:
+    """Download a GTFS archive directly to a file with atomic temporary replacement.
+
+    If an error occurs at any point during download, the partial file is removed.
+    """
+    dest_path = Path(destination)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    part_path = dest_path.with_suffix(dest_path.suffix + ".part")
+
+    masked_url = mask_url_credentials(url)
+    req_headers = dict(headers or {})
+    if api_key:
+        if api_key_header.lower() == "authorization" and not api_key.lower().startswith(
+            "bearer "
+        ):
+            req_headers[api_key_header] = f"Bearer {api_key}"
+        else:
+            req_headers[api_key_header] = api_key
+
+    timeout = httpx.Timeout(timeout_seconds, connect=15.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with client.stream("GET", url, headers=req_headers) as response:
+                if response.status_code >= 400:
+                    msg = (
+                        f"Download failed from {masked_url}: "
+                        f"HTTP {response.status_code}"
+                    )
+                    raise GTFSDownloadError(msg)
+
+                content_length_str = response.headers.get("content-length")
+                if content_length_str and content_length_str.isdigit():
+                    content_length = int(content_length_str)
+                    if content_length > max_bytes:
+                        raise GTFSDownloadError(
+                            f"Feed Content-Length ({content_length} B) exceeds limit "
+                            f"({max_bytes} B)"
+                        )
+
+                downloaded_bytes = 0
+                with open(part_path, "wb") as f:
+                    async for chunk in response.aiter_bytes():
+                        downloaded_bytes += len(chunk)
+                        if downloaded_bytes > max_bytes:
+                            msg = (
+                                f"Feed download exceeded max allowed size of "
+                                f"{max_bytes} B"
+                            )
+                            raise GTFSDownloadError(msg)
+                        f.write(chunk)
+
+                if part_path.exists():
+                    part_path.replace(dest_path)
+                return dest_path
+    except Exception as exc:
+        if part_path.exists():
+            try:
+                part_path.unlink()
+            except OSError:
+                pass
+        if isinstance(exc, GTFSDownloadError):
+            raise
+        if isinstance(exc, httpx.TimeoutException):
+            raise GTFSDownloadError(
+                f"Feed download timed out after {timeout_seconds}s from {masked_url}"
+            ) from exc
         raise GTFSDownloadError(
             f"Network error downloading feed from {masked_url}: {exc}"
         ) from exc

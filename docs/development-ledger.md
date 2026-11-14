@@ -1306,3 +1306,52 @@ Conducted a comprehensive, code-level deployability and testability readiness au
 #### MVP Status & Readiness
 - All planned MVP stages (Stages 0 through 5) are fully implemented, integrated, tested, and verified on the local PostGIS + Docker stack.
 - Real-time GTFS-RT ingestion actively streams Delhi bus telemetry, and static GTFS schedule data powers interactive network exploration, route mapping, stop arrivals, and trip planning.
+
+---
+
+### 2026-11-14 — Windows Reproducible Setup, Archive Validation & Idempotency Hardening (Completed & Verified)
+
+#### Context & Objectives
+- Delivered a zero-manual-code-modification setup workflow for cloning and running WaitWatch on fresh Windows machines.
+- Strengthened Git exclusions so downloaded GTFS archives (`/data/`, `*.zip`, `*.tar.gz`, `*.part`) and `.env` files are never tracked.
+- Updated `.env.example` with safe, comprehensive configuration placeholders for static GTFS archives, automated download URLs, and expected SHA-256 checksums without storing secrets.
+- Implemented robust static GTFS archive validation (ZIP integrity, path traversal safety, required GTFS tables `agency.txt`, `routes.txt`, `stops.txt`, `trips.txt`, `stop_times.txt`, and optional SHA-256 checksum verification) in both Python (`validate_archive`, `compute_archive_sha256`) and PowerShell (`Test-GTFSArchive`).
+- Added CLI subcommands `validate-archive` and `--allow-existing` to `gtfs-cli` for idempotent, non-destructive feed registration.
+- Added atomic file downloader (`download_gtfs_archive_to_file`) with `.part` staging and cleanup on failure.
+- Extended `scripts/setup-delhi-transit.ps1` with prerequisite validation, automatic `.env` creation with secure local database credentials, manual `-ArchivePath` parameter support, `-ExpectedSha256` verification, and idempotent registration/importing that preserves both `delhi-bus` (real-time) and `delhi-buses` (static schedules).
+- Documented external dataset acquisition (Delhi Transport Stack portal) and credentials (Open Transit Data Delhi key) in `README.md`.
+
+#### Implemented Components & Bug Fixes
+1. **Archive Safety & Validation** (`apps/api/app/services/gtfs/archive.py`):
+   - Added `REQUIRED_GTFS_FILES` constant checking for the five mandatory GTFS schedule tables.
+   - Implemented `compute_archive_sha256()` and `validate_archive()` with safety bounds, integrity checks, and descriptive error reporting.
+2. **Atomic Archive Downloader** (`apps/api/app/services/gtfs/downloader.py`):
+   - Implemented `download_gtfs_archive_to_file()` with streaming verification and temporary `.part` file cleanup on error.
+3. **CLI Subcommands** (`apps/api/app/services/gtfs/cli.py`):
+   - Added `validate-archive` subcommand for CLI-level archive inspection.
+   - Added `--allow-existing` flag to `register` subcommand for idempotent feed registration.
+4. **Enhanced Windows Setup Automation** (`scripts/setup-delhi-transit.ps1`):
+   - Checks PowerShell 5.1+ and Docker Desktop/engine status.
+   - Safely parses and initializes `.env` with auto-generated secure development database credentials if placeholder is present.
+   - Validates archives via `Test-GTFSArchive` before Docker ingestion.
+   - Idempotently registers `delhi-bus` and `delhi-buses`, skipping redundant imports when data is already populated.
+5. **Git & Environment Security** (`.gitignore`, `.env.example`):
+   - Excluded `/data/`, `*.zip`, `*.tar.gz`, `*.part` from Git tracking.
+   - Added `DELHI_GTFS_ARCHIVE_PATH`, `DELHI_GTFS_STATIC_URL`, and `DELHI_GTFS_STATIC_SHA256` placeholders.
+6. **Automated Unit & Integration Test Suites**:
+   - `apps/api/tests/test_setup_validation.py`: 15 tests covering config validation, missing archives, checksum matches/mismatches, corrupt ZIPs, missing required tables, failed downloads with partial file cleanup, and idempotent registration.
+   - `scripts/setup-delhi-transit.Tests.ps1`: 8 Pester tests verifying PowerShell environment reading/writing, checksum verification, corrupt ZIP rejection, and required GTFS file inspection.
+7. **Documentation** (`README.md`):
+   - Added complete *Windows Quickstart (Automated & Reproducible)* section with step-by-step instructions, external credential/dataset tables, and execution policy guidance.
+
+#### Verification Evidence
+- **Backend Tests (Pytest)**: 190 tests passed in 31.26s (`py -3.12 -m pytest -c apps/api/pyproject.toml apps/api`).
+- **PowerShell Tests (Pester)**: 8 tests passed in 2.54s (`Invoke-Pester -Path .\scripts\setup-delhi-transit.Tests.ps1`).
+- **Frontend Tests (Vitest)**: 106 tests passed in 12.05s (`npm.cmd --prefix apps/web test -- --run`).
+- **Backend Code Quality (Ruff)**: 72 files checked, 0 errors, 0 warnings (`ruff check apps/api`, `ruff format --check apps/api`).
+- **Frontend Code Quality (ESLint & TypeScript)**: 0 errors (`eslint src/`, `tsc -b --noEmit`).
+- **Bytecode Compilation**: 0 errors across all modules (`compileall`).
+- **CLI Validation Verification**:
+  - `python -m app.services.gtfs.cli validate-archive --file data/gtfs/delhi-buses.zip` -> PASS (8 GTFS tables found).
+  - Checksum match verified against `8eb05d9c21e7a6b42d7b49de45cb095b70ddee5b8f7716859330c9784c322f05`.
+  - Checksum mismatch safely rejected with exit code 1.
